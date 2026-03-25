@@ -38,6 +38,90 @@ Beacon uses a reverse-proxy model to manage multiple local domains and provide a
        [ MC Server: Survival ]           [ MC Server: Creative ]
 
 
+
+
+📦 What's in a Release?
+
+When a user downloads a release from GitHub, the folder structure is designed for immediate deployment. No source code is included.
+
+The User's Directory Structure
+
+beacon-v1.0.0/
+├── docker-compose.yml     # The main orchestrator (pulls images from GHCR)
+├── .env.example           # Configuration template (passwords, URLs)
+├── nginx/
+│   └── default.conf       # Pre-configured routing for your local domains
+├── data/                  # (Created on first run) Persistent DB & SSO data
+└── README.md              # Installation & Quick Start guide
+
+
+🚀 Quick Start (For End-Users)
+
+1. Host Configuration
+
+Add these to your /etc/hosts (Linux/Mac) or C:\Windows\System32\drivers\etc\hosts (Windows):
+
+127.0.0.1 app.beacon.local api.beacon.local sso.beacon.local
+
+
+2. Configure Environment
+
+Rename .env.example to .env and set your secure values:
+
+# Example .env
+POSTGRES_PASSWORD=my_secure_db_pass
+KEYCLOAK_ADMIN_PASSWORD=my_secure_admin_pass
+BEACON_SECRET_KEY=generate_a_random_string
+
+
+3. Deployment
+
+Run the following command from within the extracted folder:
+
+docker-compose up -d
+
+
+🛠️ Production Docker Compose (Example)
+
+This is a snippet of the docker-compose.yml included in the release:
+
+services:
+  # The Unified App (Rust + Vue)
+  beacon:
+    image: ghcr.io/herbydevs/beacon:latest
+    container_name: beacon_core
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - beacon_internal
+
+  # Infrastructure
+  postgres:
+    image: postgres:16-alpine
+    container_name: beacon_db
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: beacon_sso
+    command: start-dev
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+
+
+
+
+
+
+
+
 🌐 Local DNS & Networking
 
 To access the dashboard and services via custom local domains, you must map them in your system's hosts file.
@@ -114,29 +198,31 @@ Project Structure
 
 Backend Setup (Rust)
 
-Ensure Postgres is running.
+       Ensure Postgres is running.
 
-cd backend
+       cd backend
 
-cargo watch -x run
+       cargo watch -x run
 
-Frontend Setup (Vue 3)
+       Frontend Setup (Vue 3)
 
-cd frontend
+       cd frontend
 
-npm install
+       npm install
 
-npm run dev
+       npm run dev
 
-Contribution Workflow
+       Contribution Workflow
 
-Fork the Project.
+       Fork the Project.
 
-Create your Feature Branch (git checkout -b feature/AmazingFeature).
+       Create your Feature Branch (git checkout -b feature/AmazingFeature).
 
-Commit your Changes (git commit -m 'Add some AmazingFeature').
+       Commit your Changes (git commit -m 'Add some AmazingFeature').
 
-Push to the Branch (git push origin feature/AmazingFeature).
+       Push to the Branch (git push origin feature/AmazingFeature).
+
+
 
 Open a Pull Request.
 
