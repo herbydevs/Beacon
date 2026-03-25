@@ -1,0 +1,37 @@
+[package]
+name = "backend"
+version = "0.1.0"
+edition = "2021"
+authors = ["herbydevs"]
+description = "High-performance Minecraft orchestrator control plane"
+
+[dependencies]
+# Web Framework & Async Runtime
+axum = { version = "0.7", features = ["ws", "macros"] }
+tokio = { version = "1.0", features = ["full"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs", "trace"] }
+
+# Docker Engine API Client
+bollard = "0.15"
+
+# Database (PostgreSQL)
+sqlx = { version = "0.7", features = ["runtime-tokio", "tls-rustls", "postgres", "chrono", "uuid", "json"] }
+
+# Serialization & Data Handling
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Environment & Logging
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
