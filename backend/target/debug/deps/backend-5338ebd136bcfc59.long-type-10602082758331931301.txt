@@ -1,0 +1,2 @@
+for<'a, 'b, 'c, 'd> fn(&'a Docker, &'b Pool<Postgres>, &'c str, &'d str) -> impl std::future::Future<Output = Result<(), anyhow::Error>> {create_server_instance}
+for<'a, 'b, 'c, 'd> fn(&'a Docker, &'b Pool<Postgres>, &'c str, &'d str) -> impl std::future::Future<Output = Result<(), anyhow::Error>> {create_server_instance}: Handler<_, _>

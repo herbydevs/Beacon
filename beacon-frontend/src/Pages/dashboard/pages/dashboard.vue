@@ -1,10 +1,10 @@
 <script setup>
-import { ref } from 'vue'
+import {onMounted, ref} from 'vue'
 
-const servers = ref([
-  { id: 1, name: 'Survival Hub', address: 'hub.beacon.local', status: 'online', cpu: 42, ram: 2.4, version: '1.21.1', difficulty: 'Normal', type: 'Spigot', players: [{ name: 'herbydevs', health: 20, xp: 85, level: 42 }] },
-  { id: 2, name: 'Creative Test', address: 'dev.beacon.local', status: 'offline', cpu: 0, ram: 0, version: '1.20.1', difficulty: 'Peaceful', type: 'Vanilla', players: [] },
-])
+// const servers = ref([
+//   { id: 1, name: 'Survival Hub', address: 'hub.beacon.local', status: 'online', cpu: 42, ram: 2.4, version: '1.21.1', difficulty: 'Normal', type: 'Spigot', players: [{ name: 'herbydevs', health: 20, xp: 85, level: 42 }] },
+//   { id: 2, name: 'Creative Test', address: 'dev.beacon.local', status: 'offline', cpu: 0, ram: 0, version: '1.20.1', difficulty: 'Peaceful', type: 'Vanilla', players: [] },
+// ])
 
 const platforms = [
   { id: 'vanilla', name: 'Vanilla', icon: 'https://minecraft.wiki/images/thumb/Crafting_Table_JE4_BE3.png/120px-Crafting_Table_JE4_BE3.png?5767f' },
@@ -18,6 +18,31 @@ const currentView = ref('grid')
 const selectedServer = ref(null)
 const selectedPlayer = ref(null)
 
+const servers = ref([])
+const isLoading = ref(true)
+const error = ref(null)
+
+
+const fetchServers = async () => {
+  try {
+    isLoading.value = true
+    const response = await fetch('http://api.beacon.local/api/v1/servers/get')
+    if (!response.ok) throw Error('Cluster unreachable')
+    servers.value = response.json()
+
+  }catch (error) {
+    console.log(error)
+
+  } finally {
+    isLoading.value = false
+  }
+}
+
+onMounted(() => {
+  fetchServers()
+})
+
+
 const newServer = ref({
   name: '',
   motd: 'A Project Beacon Server',
@@ -25,6 +50,8 @@ const newServer = ref({
   type: 'Vanilla',
   difficulty: 'Normal'
 })
+
+
 
 const deployServer = () => {
   if (!newServer.value.name) return
@@ -71,36 +98,12 @@ const closeStats = () => {
         </button>
       </header>
 
-      <div class="server-grid">
+      <div v-if="isLoading" class="status-msg">Synchronizing Cluster Data...</div>
+      <div v-else-if="error" class="status-msg error">{{ error }}</div>
+
+      <div v-else class="server-grid">
         <div v-for="server in servers" :key="server.id" class="card server-card" :class="server.status" @click="openServerStats(server)">
-          <div class="card-inner">
-            <div class="card-head">
-              <div class="status-pill">
-                <span class="dot"></span> {{ server.status }}
-              </div>
-              <div class="badge-group">
-                <span class="version-badge">{{ server.version }}</span>
-                <span class="type-badge">{{ server.type }}</span>
-              </div>
-            </div>
 
-            <div class="server-info">
-              <h3>{{ server.name }}</h3>
-              <code>{{ server.address }}</code>
-            </div>
-
-            <div class="metrics">
-              <div class="metric-labels"><span>CPU Usage</span><span>{{ server.cpu }}%</span></div>
-              <div class="progress-bg"><div class="progress-fill" :style="{ width: server.cpu + '%' }"></div></div>
-            </div>
-
-            <div class="card-actions" @click.stop>
-              <button class="btn-action" :class="server.status" @click="toggleStatus(server)">
-                {{ server.status === 'online' ? 'STOP' : 'START' }}
-              </button>
-              <button class="btn-secondary" @click="openServerStats(server)">CONSOLE</button>
-            </div>
-          </div>
         </div>
 
         <div class="card create-card" @click="isCreating = true">
@@ -112,122 +115,6 @@ const closeStats = () => {
         </div>
       </div>
     </div>
-
-    <div v-else-if="currentView === 'stats'" class="view-layer">
-      <header class="dashboard-header">
-        <div class="title-section">
-          <button class="btn-text" @click="closeStats" style="padding: 0; margin-bottom: 10px;">← Back to Cluster</button>
-          <h1>{{ selectedServer.name }}</h1>
-          <p>Node Management / <span>{{ selectedServer.address }}</span></p>
-        </div>
-      </header>
-
-      <div class="stats-layout">
-        <div class="card console-card">
-          <label class="section-label">Live Console</label>
-          <div class="terminal-box">
-            <code>[14:22:01] [Server thread/INFO]: Starting minecraft server version {{ selectedServer.version }}</code>
-            <code>[14:22:05] [Server thread/INFO]: Done (4.122s)! For help, type "help"</code>
-          </div>
-        </div>
-
-        <div class="card players-card">
-          <label class="section-label">Online Players</label>
-          <div v-if="selectedServer.players.length > 0" class="player-list">
-            <div v-for="player in selectedServer.players" :key="player.name" class="player-row" @click="selectedPlayer = player">
-              <img :src="`https://mc-heads.net/avatar/${player.name}/32`" class="p-head" alt="head" />
-              <span>{{ player.name }}</span>
-              <span class="view-tag">VIEW</span>
-            </div>
-          </div>
-          <p v-else class="empty-text">No players currently online.</p>
-        </div>
-      </div>
-    </div>
-
-    <Transition name="pop">
-      <div v-if="selectedPlayer" class="modal-overlay" @click.self="selectedPlayer = null">
-        <div class="modal-glass player-stats-modal">
-          <div class="player-profile">
-            <img :src="`https://mc-heads.net/body/${selectedPlayer.name}/120`" class="p-body" alt="player body" />
-            <div class="p-info">
-              <h2>{{ selectedPlayer.name }}</h2>
-              <p>Level {{ selectedPlayer.level }}</p>
-            </div>
-          </div>
-          <div class="vitals-section">
-            <div class="vital">
-              <label class="section-label">Health</label>
-              <div class="heart-grid">
-                <span v-for="i in 10" :key="i" :style="{ opacity: i <= selectedPlayer.health/2 ? 1 : 0.2 }">❤️</span>
-              </div>
-            </div>
-            <div class="vital">
-              <label class="section-label">XP Progress ({{ selectedPlayer.xp }}%)</label>
-              <div class="progress-bg"><div class="progress-fill xp" :style="{ width: selectedPlayer.xp + '%' }"></div></div>
-            </div>
-          </div>
-          <button class="primary-btn" @click="selectedPlayer = null" style="width: 100%; margin-top: 20px;">Close Stats</button>
-        </div>
-      </div>
-    </Transition>
-
-    <Transition name="pop">
-      <div v-if="isCreating" class="modal-overlay" @click.self="isCreating = false">
-        <div class="modal-glass fancy-menu">
-          <div class="modal-header">
-            <h2>Provision Instance</h2>
-            <p>Define core properties for your deployment</p>
-          </div>
-          <div class="form-body">
-            <div class="input-stack">
-              <label class="inner-label">Identity</label>
-              <input v-model="newServer.name" type="text" placeholder="Server Name" class="fancy-input main" />
-              <div class="divider"></div>
-              <input v-model="newServer.motd" type="text" placeholder="MOTD" class="fancy-input sub" />
-            </div>
-            <div class="form-section">
-              <label class="section-label">Platform</label>
-              <div class="platform-grid">
-                <div v-for="p in platforms" :key="p.id"
-                     class="platform-option"
-                     :class="{ active: newServer.type === p.name }"
-                     @click="newServer.type = p.name">
-                  <img :src="p.icon" class="platform-img" alt="platform icon" />
-                  <span>{{ p.name }}</span>
-                </div>
-              </div>
-            </div>
-            <div class="form-row">
-              <div class="form-group">
-                <label class="section-label">Version</label>
-                <select v-model="newServer.version" class="fancy-select">
-                  <option>1.21.1</option>
-                  <option>1.20.1</option>
-                  <option>1.19.4</option>
-                  <option>1.8.9</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="section-label">Difficulty</label>
-                <div class="segmented-control">
-                  <button v-for="d in ['Peaceful', 'Easy', 'Normal', 'Hard']"
-                          :key="d"
-                          :class="{ active: newServer.difficulty === d }"
-                          @click="newServer.difficulty = d">
-                    {{ d.charAt(0) }}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button class="btn-text" @click="isCreating = false">Cancel</button>
-            <button class="primary-btn glow" @click="deployServer">Initialize Deployment</button>
-          </div>
-        </div>
-      </div>
-    </Transition>
 
   </div>
 </template>
@@ -309,4 +196,17 @@ h1 { font-size: 2.5rem; font-weight: 900; letter-spacing: -1.5px; margin: 0; }
 
 .pop-enter-active { transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1); }
 .pop-enter-from { opacity: 0; transform: scale(0.9) translateY(20px); }
+
+.status-msg {
+  padding: 40px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.5);
+  border-radius: 20px;
+  font-weight: 700;
+  color: #86868b;
+}
+.status-msg.error {
+  color: #ff3b30;
+  border: 1px solid rgba(255, 59, 48, 0.2);
+}
 </style>

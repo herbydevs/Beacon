@@ -1,0 +1,1 @@
+fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<AppState>>) -> impl futures_util::Future<Output = Sse<impl Stream<Item = Result<axum::response::sse::Event, Infallible>>>> {handle_server_logs}

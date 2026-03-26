@@ -4,6 +4,7 @@ use crate::state::AppState;
 
 // Declare the auth module
 pub mod auth;
+mod server;
 
 /// The central API router for Beacon v2.
 ///
@@ -12,7 +13,8 @@ pub mod auth;
 pub fn api_router() -> Router<Arc<AppState>> {
     Router::new()
         // Auth endpoints: /api/v1/auth/login, /api/v1/auth/callback, etc.
-        .nest("/auth", auth::create_router())
+        // .nest("/auth", auth::create_router())
+        .nest("/servers", server::create_router())
 
     // Placeholder for future Minecraft instance management
     // .nest("/instances", instances::router())

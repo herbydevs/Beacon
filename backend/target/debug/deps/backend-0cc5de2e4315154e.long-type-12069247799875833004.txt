@@ -1,0 +1,1 @@
+fn(axum::extract::Path<std::string::String>, axum::extract::State<Arc<AppState>>) -> impl futures_util::Future<Output = Sse<Pin<Box<(dyn Stream<Item = Result<axum::response::sse::Event, Infallible>> + std::marker::Send + 'static)>>>> {handle_server_logs}

@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use http::{header, Method};
 
 pub mod routes;
 pub mod keycloak;
@@ -16,6 +17,26 @@ pub mod state;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+
+    let cors = CorsLayer::new()
+        // Explicitly allow your local dev domains
+        .allow_origin([
+            "http://beacon.local".parse()?,
+            "http://api.beacon.local".parse()?,
+            "http://localhost:5173".parse()?, // Common for Vue/Vite dev
+        ])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE
+        ]);
+
     // 1. Initialize Logging & Environment Variables
     dotenv().ok();
     tracing_subscriber::registry()

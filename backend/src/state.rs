@@ -12,5 +12,5 @@ pub struct AppState {
     pub docker: Docker,
     pub keycloak_realm: String,
     pub keycloak_config: Config,
-    //pub ollama: Arc<OllamaService>,
+    //pub ollama: Arc<OllamaService>
 }
