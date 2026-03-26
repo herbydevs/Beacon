@@ -1,10 +1,10 @@
 <script setup>
 import {onMounted, ref} from 'vue'
 
-// const servers = ref([
-//   { id: 1, name: 'Survival Hub', address: 'hub.beacon.local', status: 'online', cpu: 42, ram: 2.4, version: '1.21.1', difficulty: 'Normal', type: 'Spigot', players: [{ name: 'herbydevs', health: 20, xp: 85, level: 42 }] },
-//   { id: 2, name: 'Creative Test', address: 'dev.beacon.local', status: 'offline', cpu: 0, ram: 0, version: '1.20.1', difficulty: 'Peaceful', type: 'Vanilla', players: [] },
-// ])
+const servers = ref([
+  { id: 1, name: 'Survival Hub', address: 'hub.beacon.local', status: 'online', cpu: 42, ram: 2.4, version: '1.21.1', difficulty: 'Normal', type: 'Spigot', players: [{ name: 'herbydevs', health: 20, xp: 85, level: 42 }] },
+  { id: 2, name: 'Creative Test', address: 'dev.beacon.local', status: 'offline', cpu: 0, ram: 0, version: '1.20.1', difficulty: 'Peaceful', type: 'Vanilla', players: [] },
+])
 
 const platforms = [
   { id: 'vanilla', name: 'Vanilla', icon: 'https://minecraft.wiki/images/thumb/Crafting_Table_JE4_BE3.png/120px-Crafting_Table_JE4_BE3.png?5767f' },
@@ -18,7 +18,7 @@ const currentView = ref('grid')
 const selectedServer = ref(null)
 const selectedPlayer = ref(null)
 
-const servers = ref([])
+// const servers = ref([])
 const isLoading = ref(true)
 const error = ref(null)
 
@@ -38,9 +38,9 @@ const fetchServers = async () => {
   }
 }
 
-onMounted(() => {
-  fetchServers()
-})
+// onMounted(() => {
+//   fetchServers()
+// })
 
 
 const newServer = ref({
