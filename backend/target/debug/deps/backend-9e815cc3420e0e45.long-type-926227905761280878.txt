@@ -1,2 +1,0 @@
-fn(axum::extract::State<Arc<state::AppState>>, axum::Json<RegisterRequest>) -> impl std::future::Future<Output = impl IntoResponse> {handlers::register}
-fn(axum::extract::State<Arc<state::AppState>>, axum::Json<RegisterRequest>) -> impl std::future::Future<Output = impl IntoResponse> {handlers::register}: Handler<_, _>
