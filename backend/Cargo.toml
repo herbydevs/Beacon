@@ -1,11 +1,15 @@
+cargo-features = ["edition2021"]
+
 [package]
 name = "backend"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["herbydevs"]
 description = "High-performance Minecraft orchestrator control plane"
 
 [dependencies]
+home = "=0.5.9"
+
 # Web Framework & Async Runtime
 axum = { version = "0.7", features = ["ws", "macros"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -32,6 +36,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Error Handling
 anyhow = "1.0"
 thiserror = "1.0"
+reqwest = { version = "0.12", features = ["json", "multipart"] }
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

@@ -6,31 +6,45 @@ RUN npm install
 COPY beacon-frontend/ .
 RUN npm run build
 
-# --- STAGE 2: Build Backend ---
-FROM rust:1.75-slim AS backend-builder
+FROM rustlang/rust:nightly-slim AS backend-builder
+
+
+ENV RUSTC_BOOTSTRAP=1
+
+RUN apt-get update && apt-get install -y \
+    pkg-config libssl-dev libpq-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app/backend
-# Install system dependencies for SQLx and OpenSSL
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY backend/Cargo.toml backend/Cargo.lock ./
-# Create dummy main to cache dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release
+
+# Standard build caching...
+RUN mkdir src && echo "fn main() {}" > src/main.rs && \
+    cargo build --release && rm -rf src
+
+# Ensure all subdirectories (like dbmodels) are copied
 COPY backend/src ./src
+
+# Final build - it will now ignore the missing database
 RUN touch src/main.rs && cargo build --release
 
 # --- STAGE 3: Final Runtime ---
 FROM debian:bookworm-slim
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y libssl3 ca-certificates curl && rm -rf /var/lib/apt/lists/*
+# Added libpq5 for Postgres runtime support
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    libpq5 \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy backend binary
-COPY --from=backend-builder /app/backend/target/release/beacon-backend ./beacon
-
-# Copy frontend static files for Axum to serve
+# FIX: Path must match your [package] name "backend"
+COPY --from=backend-builder /app/backend/target/release/backend ./beacon
 COPY --from=frontend-builder /app/beacon-frontend/dist ./static
 
-# Expose the Axum port
-EXPOSE 8000
+RUN chmod +x ./beacon
 
+EXPOSE 8000
 CMD ["./beacon"]
