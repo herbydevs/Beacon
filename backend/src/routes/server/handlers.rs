@@ -1,5 +1,5 @@
 use axum::{extract::State, response::IntoResponse, Json,extract::Path, response::sse::{Event, Sse}};
-use bollard::container::{Config, CreateContainerOptions, StartContainerOptions, NetworkingConfig, StopContainerOptions};
+use bollard::container::{Config, CreateContainerOptions, StartContainerOptions, NetworkingConfig, StopContainerOptions, RemoveContainerOptions};
 use bollard::image::CreateImageOptions;
 use bollard::models::{HostConfig, PortBinding, EndpointSettings}; // Added EndpointSettings
 use bollard::network::{CreateNetworkOptions, InspectNetworkOptions};
@@ -11,8 +11,13 @@ use axum::response::sse::KeepAlive;
 use bollard::container::LogsOptions;
 use futures_util::{Stream, StreamExt};
 use bollard::container::StatsOptions;
+use std::{time::Duration};
+use async_stream::stream;
 
-use crate::dbmodels::server::{startServerRequest, CreateServerRequest, Server};
+
+
+
+use crate::dbmodels::server::{startServerRequest, CreateServerRequest, Server, deleteServerRequest};
 use crate::state::AppState;
 
 pub async fn handle_create_server(
@@ -164,6 +169,11 @@ pub async fn create_server_instance(
         ..Default::default()
     };
 
+
+
+
+
+
     // 6. EXECUTE: Create and Start
     let container = docker
         .create_container(
@@ -175,11 +185,6 @@ pub async fn create_server_instance(
         )
         .await?;
 
-    docker
-        .start_container(&req.name, None::<StartContainerOptions<String>>)
-        .await?;
-
-    // 7. PERSIST: Save to Postgres
     sqlx::query(
         "INSERT INTO servers (name, container_id, version, status, server_type) VALUES ($1, $2, $3, $4, $5)",
     )
@@ -190,6 +195,13 @@ pub async fn create_server_instance(
         .bind(&req.server_type)
         .execute(db_pool)
         .await?;
+
+    docker
+        .start_container(&req.name, None::<StartContainerOptions<String>>)
+        .await?;
+
+    // 7. PERSIST: Save to Postgres
+
 
     Ok(())
 }
@@ -234,49 +246,66 @@ pub async fn stop_server_instance(
 
 pub async fn handle_get_servers(
     State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    // 1. Fetch metadata from Postgres
-    let mut servers = match sqlx::query_as::<_, Server>("SELECT * FROM servers")
-        .fetch_all(&state.pool)
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
+) -> Sse<Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>> {
 
-    // 2. Hydrate with Docker Stats
-    for server in servers.iter_mut() {
-        // Fetch container info to get the real status and address
-        if let Ok(inspect) = state.docker.inspect_container(&server.container_id, None).await {
-            server.status = inspect.state.and_then(|s| s.status).map(|s| format!("{:?}", s)).unwrap_or("unknown".into());
+    let event_stream = stream! {
+        // Set an interval so we don't spam the DB/Docker socket too fast
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
 
-            // Map the internal 25565 to the host address (hub.beacon.local)
-            server.address = Some(format!("{}.beacon.local", server.name.to_lowercase()));
+        loop {
+            interval.tick().await;
 
-            // Get a single snapshot of stats for CPU usage
-            let mut stats_stream = state.docker.stats(
-                &server.container_id,
-                Some(StatsOptions {
-                    stream: false,
-                    one_shot: true, // Add this field
-                })
-            );
-            if let Some(Ok(stats)) = stats_stream.next().await {
-                // Simplified CPU calculation
-                let cpu_delta = stats.cpu_stats.cpu_usage.total_usage as f64 - stats.precpu_stats.cpu_usage.total_usage as f64;
-                let system_delta = stats.cpu_stats.system_cpu_usage.unwrap_or(0) as f64 - stats.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+            // 1. Fetch metadata from Postgres
+            let mut servers = match sqlx::query_as::<_, Server>("SELECT * FROM servers")
+                .fetch_all(&state.pool)
+                .await
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    yield Ok(Event::default().data(format!("Database Error: {}", e)));
+                    continue;
+                }
+            };
 
-                if system_delta > 0.0 {
-                    let cpu_pct = (cpu_delta / system_delta) * stats.cpu_stats.online_cpus.unwrap_or(1) as f64 * 100.0;
-                    server.cpu_usage = Some(cpu_pct.round());
+            // 2. Hydrate with Docker Stats (Parallelized within the tick)
+            for server in servers.iter_mut() {
+                if let Ok(inspect) = state.docker.inspect_container(&server.container_id, None).await {
+                    server.status = inspect.state.and_then(|s| s.status)
+                        .map(|s| format!("{:?}", s))
+                        .unwrap_or("unknown".into());
+
+                    server.address = Some(format!("{}.beacon.local", server.name.to_lowercase()));
+
+                    // One-shot stats for CPU
+                    let mut stats_stream = state.docker.stats(
+                        &server.container_id,
+                        Some(StatsOptions { stream: false, one_shot: true })
+                    );
+
+                    if let Some(Ok(stats)) = stats_stream.next().await {
+                        let cpu_delta = stats.cpu_stats.cpu_usage.total_usage as f64 - stats.precpu_stats.cpu_usage.total_usage as f64;
+                        let system_delta = stats.cpu_stats.system_cpu_usage.unwrap_or(0) as f64 - stats.precpu_stats.system_cpu_usage.unwrap_or(0) as f64;
+
+                        if system_delta > 0.0 {
+                            let cpu_pct = (cpu_delta / system_delta) * stats.cpu_stats.online_cpus.unwrap_or(1) as f64 * 100.0;
+                            server.cpu_usage = Some(cpu_pct.round());
+                        }
+                    }
                 }
             }
+
+            // 3. Serialize the whole array and yield as one SSE event
+            if let Ok(json_data) = serde_json::to_string(&servers) {
+                yield Ok(Event::default().data(json_data));
+            }
         }
-    }
+    };
 
-    (axum::http::StatusCode::OK, Json(servers)).into_response()
+    // Box and Pin the stream as per your working reference
+    let stream: Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> = Box::pin(event_stream);
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
-
 pub async fn handle_server_logs(
     Path(name): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -305,4 +334,54 @@ pub async fn handle_server_logs(
 
     // 3. Return the Sse
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+
+pub async fn handle_server_delete(
+    State(state): State<Arc<crate::state::AppState>>,
+    Json(payload): Json<deleteServerRequest>
+) -> impl IntoResponse {
+    // 1. Fetch the server from the database to get the Docker Container ID
+    // We do this first so we know exactly what to tell the Docker Engine to delete.
+    let server = match sqlx::query_as::<_, crate::dbmodels::server::Server>("SELECT * FROM servers WHERE id = $1")
+        .bind(payload.id)
+        .fetch_optional(&state.pool)
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return (axum::http::StatusCode::NOT_FOUND, "Server entry not found in database").into_response(),
+        Err(e) => return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Database lookup failed: {}", e)).into_response(),
+    };
+
+    // 2. Delete the Docker Container
+    // We use 'force: true' to ensure that if the Minecraft/Voxel server is currently
+    // running, Docker will SIGKILL it and remove it immediately.
+    let remove_options = Some(RemoveContainerOptions {
+        force: true,
+        ..Default::default()
+    });
+
+    if let Err(e) = state.docker.remove_container(&server.container_id, remove_options).await {
+        tracing::error!("Failed to remove Docker container {}: {}", server.container_id, e);
+        // We return early here because if the container still exists but the DB row is gone,
+        // you'd have a "zombie" container running with no way to manage it via Beacon.
+        return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Docker removal failed: {}", e)).into_response();
+    }
+
+    // 3. Delete the database row
+    // Now that the physical container is gone, we can safely clean up the metadata.
+    match sqlx::query("DELETE FROM servers WHERE id = $1")
+        .bind(payload.id)
+        .execute(&state.pool)
+        .await
+    {
+        Ok(_) => {
+            tracing::info!("Successfully deleted server {} and container {}", payload.id, server.container_id);
+            (axum::http::StatusCode::OK, "Server and container successfully deleted").into_response()
+        },
+        Err(e) => {
+            tracing::error!("Failed to delete database row for server {}: {}", payload.id, e);
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Container deleted, but failed to remove database record").into_response()
+        }
+    }
 }

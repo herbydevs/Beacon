@@ -25,6 +25,12 @@ pub struct startServerRequest{
 }
 
 
+#[derive(serde::Deserialize)]
+pub struct deleteServerRequest{
+    pub id: Uuid,
+}
+
+
 #[derive(Debug, Serialize, FromRow)]
 pub struct Server {
     pub id: Uuid,
