@@ -1,7 +1,7 @@
 # 🗼 Beacon
 ### A high-performance, container-native Minecraft orchestrator.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Rust](https://img.shields.io/badge/backend-Rust-orange.svg)](https://www.rust-lang.org/)
 [![Vue 3](https://img.shields.io/badge/frontend-Vue%203-42b883.svg)](https://vuejs.org/)
 [![Docker](https://img.shields.io/badge/platform-Docker-blue.svg)](https://www.docker.com/)
