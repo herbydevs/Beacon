@@ -1,87 +1,66 @@
 <script setup>
-import {onMounted, ref} from 'vue'
+import { onMounted, ref } from 'vue'
 
-const servers = ref([
-  { id: 1, name: 'Survival Hub', address: 'hub.beacon.local', status: 'online', cpu: 42, ram: 2.4, version: '1.21.1', difficulty: 'Normal', type: 'Spigot', players: [{ name: 'herbydevs', health: 20, xp: 85, level: 42 }] },
-  { id: 2, name: 'Creative Test', address: 'dev.beacon.local', status: 'offline', cpu: 0, ram: 0, version: '1.20.1', difficulty: 'Peaceful', type: 'Vanilla', players: [] },
-])
-
-const platforms = [
-  { id: 'vanilla', name: 'Vanilla', icon: 'https://minecraft.wiki/images/thumb/Crafting_Table_JE4_BE3.png/120px-Crafting_Table_JE4_BE3.png?5767f' },
-  { id: 'paper', name: 'Paper', icon: 'https://assets.papermc.io/brand/papermc_logo.512.png' },
-  { id: 'forge', name: 'Forge', icon: 'https://avatars.githubusercontent.com/u/1390178?s=48&v=4' },
-  { id: 'fabric', name: 'Fabric', icon: 'https://fabricmc.net/assets/logo.png' }
-]
-
-const isCreating = ref(false)
-const currentView = ref('grid')
-const selectedServer = ref(null)
-const selectedPlayer = ref(null)
-
-// const servers = ref([])
+const servers = ref([])
 const isLoading = ref(true)
 const error = ref(null)
 
-
+// FIX: Standardizing the Fetch logic
 const fetchServers = async () => {
+  console.log("fetch servers called");
   try {
-    isLoading.value = true
-    const response = await fetch('http://api.beacon.local/api/v1/servers/get')
-    if (!response.ok) throw Error('Cluster unreachable')
-    servers.value = response.json()
+    isLoading.value = true;
 
-  }catch (error) {
-    console.log(error)
+    const response = await fetch("/api/v1/servers/get", {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    });
 
+    console.log("response received", response);
+
+    // 1. YOU MUST AWAIT THIS:
+    const data = await response.json();
+
+    console.log("data", data);
+
+    // 2. Assign the actual Array (the resolved data) to your ref
+    servers.value = Array.isArray(data) ? data : (data.servers || []);
+
+    console.log("servers", servers.value); // Use .value to see the actual array in the log
+
+  } catch (err) {
+    error.value = "Sync Error: Check API connection.";
+    console.error("Project Beacon Error:", err);
   } finally {
-    isLoading.value = false
+    isLoading.value = false;
   }
-}
+};
 
-// onMounted(() => {
-//   fetchServers()
-// })
+// FIX: Added a dedicated function for handling the STREAM
+// const connectToStream = async () => {
+//   try {
+//     const response = await fetch("http://api.beacon.local/api/v1/servers/stream"); // Replace with your stream path
+//     const reader = response.body.getReader();
+//     const decoder = new TextDecoder();
+//
+//     while (true) {
+//       const { value, done } = await reader.read();
+//       if (done) break;
+//
+//       const chunk = decoder.decode(value, { stream: true });
+//       console.log("Stream update:", chunk);
+//       // Update your UI state here based on the chunk
+//     }
+//   } catch (err) {
+//     console.error("Stream interrupted:", err);
+//   }
+// };
 
+onMounted(() => {
+  fetchServers();
 
-const newServer = ref({
-  name: '',
-  motd: 'A Project Beacon Server',
-  version: '1.21.1',
-  type: 'Vanilla',
-  difficulty: 'Normal'
+  //connectToStream(); // Uncomment when your stream route is ready
 })
-
-
-
-const deployServer = () => {
-  if (!newServer.value.name) return
-  servers.value.push({
-    id: Date.now(),
-    ...newServer.value,
-    address: `${newServer.value.name.toLowerCase().replace(/\s+/g, '-')}.beacon.local`,
-    status: 'offline',
-    cpu: 0,
-    ram: 0,
-    players: []
-  })
-  isCreating.value = false
-  newServer.value = { name: '', motd: 'A Project Beacon Server', version: '1.21.1', type: 'Vanilla', difficulty: 'Normal' }
-}
-
-const toggleStatus = (server) => {
-  server.status = server.status === 'online' ? 'offline' : 'online'
-  server.cpu = server.status === 'online' ? Math.floor(Math.random() * 40) + 10 : 0
-}
-
-const openServerStats = (server) => {
-  selectedServer.value = server
-  currentView.value = 'stats'
-}
-
-const closeStats = () => {
-  currentView.value = 'grid'
-  selectedServer.value = null
-}
 </script>
 
 <template>
@@ -103,7 +82,34 @@ const closeStats = () => {
 
       <div v-else class="server-grid">
         <div v-for="server in servers" :key="server.id" class="card server-card" :class="server.status" @click="openServerStats(server)">
+          <div class="card-inner">
+            <div class="card-head">
+              <div class="status-pill">
+                <span class="dot"></span> {{ server.status }}
+              </div>
+              <div class="badge-group">
+                <span class="version-badge">{{ server.version }}</span>
+                <span class="type-badge">{{ server.type }}</span>
+              </div>
+            </div>
 
+            <div class="server-info">
+              <h3>{{ server.name }}</h3>
+              <code>{{ server.address }}</code>
+            </div>
+
+            <div class="metrics">
+              <div class="metric-labels"><span>CPU Usage</span><span>{{ server.cpu }}%</span></div>
+              <div class="progress-bg"><div class="progress-fill" :style="{ width: server.cpu + '%' }"></div></div>
+            </div>
+
+            <div class="card-actions" @click.stop>
+              <button class="btn-action" :class="server.status" @click="toggleStatus(server)">
+                {{ server.status === 'online' ? 'STOP' : 'START' }}
+              </button>
+              <button class="btn-secondary" @click="openServerStats(server)">CONSOLE</button>
+            </div>
+          </div>
         </div>
 
         <div class="card create-card" @click="isCreating = true">
@@ -114,6 +120,20 @@ const closeStats = () => {
           </div>
         </div>
       </div>
+    </div>
+
+    <div v-if="currentView === 'stats'" class="view-layer">
+      <header class="dashboard-header">
+        <div class="title-section">
+          <h1>Cloud Instances</h1>
+          <p>Project Beacon / <span>SVG-North Cluster</span></p>
+        </div>
+        <button class="primary-btn sparkle-hover" @click="isCreating = true">
+          <span class="plus">✦</span> New Instance
+        </button>
+      </header>
+
+      <button class="btn-action" @click="closeStats">Return to dashboard</button>
     </div>
 
   </div>

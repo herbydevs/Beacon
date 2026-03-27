@@ -16,15 +16,17 @@ export default defineConfig({
     },
   },
   server: {
-    // This allows the specific hostname causing the error
-    allowedHosts: ['beacon_frontend_dev','beacon.local'],
-
-    // Optional: If you are running inside Docker,
-    // you likely also need this to expose it to your network
-    host: true,
+    host: true, // Listen on all network interfaces
     port: 5173,
-
-    // Strict Port ensures it doesn't jump to 5174 if 5173 is busy
-    strictPort: true,
+    allowedHosts: [
+      'beacon.local',
+      'api.beacon.local',
+      'localhost',
+        "beacon_frontend_dev"
+    ],
+    hmr: {
+      clientPort: 80, // Force HMR to communicate through Nginx
+      host: 'app.beacon.local'
+    }
   }
 })
