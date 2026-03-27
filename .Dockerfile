@@ -1,10 +1,3 @@
-# --- STAGE 1: Build Frontend ---
-FROM node:20-alpine AS frontend-builder
-WORKDIR /app/beacon-frontend
-COPY beacon-frontend/package*.json ./
-RUN npm install
-COPY beacon-frontend/ .
-RUN npm run build
 
 FROM rustlang/rust:nightly-slim AS backend-builder
 
