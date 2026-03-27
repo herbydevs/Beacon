@@ -1,0 +1,10 @@
+[package]
+name = "beacon-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+ctrlc = "3.4"
+libc = "0.2"
+reqwest = { version = "0.11", features = ["blocking"] }
