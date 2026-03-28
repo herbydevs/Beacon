@@ -172,22 +172,29 @@ fn is_daemon_running() -> bool {
 
 async fn install_docker() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")] {
-        let url = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe";
-        println!("⏳ Downloading Docker Desktop (Headless)...");
-        let download_script = format!("Invoke-WebRequest -Uri '{}' -OutFile 'DockerInstaller.exe'", url);
-        Command::new("powershell").args(&["-Command", &download_script]).status()?;
+        println!("🐳 Installing Docker CLI via Winget...");
+        // Use winget to install Docker Desktop but we will skip launching the GUI
+        let status = Command::new("powershell")
+            .args(&[
+                "-NoProfile",
+                "-Command",     
+                "winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --quiet"
+            ])
+            .status()?;
 
-        println!("⚙️  Installing Docker Desktop silently. This may take a few minutes...");
-        let install_script = "Start-Process './DockerInstaller.exe' -ArgumentList '--quiet','--accept-license' -Wait";
-        Command::new("powershell").args(&["-Command", install_script]).status()?;
-
-        let _ = fs::remove_file("DockerInstaller.exe");
+        if !status.success() {
+            return Err("Winget failed. Ensure Winget is installed and you are connected to the internet.".into());
+        }
     }
     #[cfg(target_os = "macos")] {
-        println!("🍎 Installing Docker Desktop via Homebrew (Headless)...");
-        // Disable Homebrew interactive prompts
+        println!("🍎 Installing Docker CLI and Colima (Headless Engine)...");
         env::set_var("HOMEBREW_NO_INTERACTIVE", "1");
-        Command::new("brew").args(&["install", "--cask", "--quiet", "docker"]).status()?;
+
+        // Install docker (CLI) and colima (The actual background engine)
+        Command::new("brew").args(&["install", "docker", "colima"]).status()?;
+
+        println!("🚀 Starting Colima engine...");
+        Command::new("colima").args(&["start", "--cpu", "2", "--memory", "4"]).status()?;
     }
     Ok(())
 }
