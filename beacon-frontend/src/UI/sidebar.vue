@@ -11,11 +11,11 @@
 
 <script setup>
 const menu = [
-  { name: 'Server', path: '/dashboard', icon: '☰' },
-  { name: 'Options', path: '/settings', icon: '⚙' },
-  { name: 'Console', path: '/console', icon: '💻' },
-  { name: 'Players', path: '/players', icon: '👥' },
-  { name: 'Files', path: '/files', icon: '📁' }
+  { name: 'Server', path: '/', icon: '☰' },
+  // { name: 'Options', path: '/settings', icon: '⚙' },
+  // { name: 'Console', path: '/console', icon: '💻' },
+  // { name: 'Players', path: '/players', icon: '👥' },
+  // { name: 'Files', path: '/files', icon: '📁' }
 ]
 </script>
 

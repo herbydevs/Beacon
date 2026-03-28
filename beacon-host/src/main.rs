@@ -6,6 +6,7 @@ use std::env;
 use std::net::{UdpSocket, SocketAddr};
 use tokio::time::{sleep, Duration};
 
+
 const DOCKER_COMPOSE_RAW: &str = include_str!("../../docker-compose.yml");
 
 #[tokio::main]
@@ -58,16 +59,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ensure_compose_exists(&compose_path)?;
     println!("🌐 Mapping subdomains (Password may be required for hosts file)...");
     update_hosts(&aliases, true)?;
+    // 1. Find the folder where the 'beacon-host' binary is actually sitting
+    let mut base_dir = std::env::current_exe()?;
+    base_dir.pop(); // Remove the filename to get the directory
 
-    // 5. RUN STACK
-    println!("🐳 Launching Beacon Stack...");
+    // 2. Build the absolute paths
+    let compose_path = base_dir.join("docker-compose.yml");
+    let env_path = base_dir.join(".env");
+
+    // 3. Build the Docker command dynamically
+    let mut docker_args = vec![
+        "compose",
+        "-f", compose_path.to_str().expect("Invalid compose path")
+    ];
+    // 4. Only add the --env-file flag if the file exists (Fixes your "no such file" error)
+    if env_path.exists() {
+        docker_args.push("--env-file");
+        docker_args.push(env_path.to_str().expect("Invalid env path"));
+    }
+    // 5. Add the standard 'up' flags
+    docker_args.extend(&["up", "-d", "--remove-orphans"]);
+    println!("🐳 Launching Beacon Stack from: {:?}", base_dir);
+
+    // 6. RUN STACK
     Command::new("docker")
-        .args(&["compose", "-f", compose_path.to_str().unwrap(), "up", "-d"])
+        .args(&docker_args)
         .status()?;
 
     println!("\n🚀 BEACON LIVE | http://beacon.local");
     println!("--------------------------------------------------");
-    println!("COMMANDS: [start] [stop] [connect <url>] [exit]");
+    println!("COMMANDS: [start] [stop] [connect <url>] [create] [exit]");
     println!("--------------------------------------------------");
 
     // 6. HUB LOOP & CLEANUP
@@ -94,6 +115,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             Some(&"start") => {
                 let _ = Command::new("docker").args(&["compose", "start"]).status();
+            },
+            Some(&"create") => {
+                // 1. Get the path of the ACTUAL running .exe
+                let mut exe_path = std::env::current_exe()?;
+                exe_path.pop(); // Remove the filename to get the folder path
+
+                // 2. Point to the files right next to the .exe
+                let compose_file = exe_path.join("docker-compose.yml");
+                let env_file = exe_path.join(".env");
+
+                println!("🐳 Launching full Beacon stack from: {}", exe_path.display());
+
+                // 3. Build the Docker command
+                let mut cmd = Command::new("docker");
+                cmd.args(&[
+                    "compose",
+                    "-f", compose_file.to_str().unwrap()
+                ]);
+
+                // 4. ONLY add the --env-file flag if the file actually exists
+                if env_file.exists() {
+                    cmd.args(&["--env-file", env_file.to_str().unwrap()]);
+                } else {
+                    println!("⚠️  Note: No .env found next to exe, using system defaults.");
+                }
+
+                // 5. Run the stack
+                match cmd.args(&["up", "-d"]).status() {
+                    Ok(_) => println!("🚀 Beacon stack is now LIVE!"),
+                    Err(e) => println!("❌ Failed to launch: {}", e),
+                }
             },
             Some(&"connect") => {
                 if let Some(url) = parts.get(1) {
