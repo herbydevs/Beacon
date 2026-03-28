@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Write, BufRead, BufReader};
 use std::process::{Command, Stdio, Child};
@@ -118,19 +119,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // --- NEW HELPERS ---
 
-fn load_env_file(path: &PathBuf) {
+fn load_env_file(path: &PathBuf) -> HashMap<String, String> {
+    let mut env_map = HashMap::new();
+
     if let Ok(file) = File::open(path) {
         let reader = BufReader::new(file);
         for line in reader.lines().flatten() {
-            if line.starts_with('#') || !line.contains('=') { continue; }
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || !line.contains('=') {
+                continue;
+            }
             let parts: Vec<&str> = line.splitn(2, '=').collect();
             if parts.len() == 2 {
-                env::set_var(parts[0].trim(), parts[1].trim());
+                env_map.insert(
+                    parts[0].trim().to_string(),
+                    parts[1].trim().to_string()
+                );
             }
         }
     }
+    env_map
 }
-
 fn run_docker_up(compose_path: &PathBuf) -> io::Result<()> {
     Command::new("docker")
         .args(&["compose", "-f", compose_path.to_str().unwrap(), "up", "-d"])

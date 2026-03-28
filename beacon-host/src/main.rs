@@ -5,6 +5,7 @@ use std::path::{PathBuf};
 use std::env;
 use std::net::{UdpSocket, SocketAddr};
 use tokio::time::{sleep, Duration};
+use std::collections::HashMap;
 
 
 const DOCKER_COMPOSE_RAW: &str = include_str!("../../docker-compose.yml");
