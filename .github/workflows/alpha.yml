@@ -1,6 +1,4 @@
 name: Beacon Alpha 
-with:
-        prerelease: true  # <--- This is the magic switch
 on:
   push:
     tags: ['alpha*']
@@ -178,6 +176,8 @@ jobs:
     steps:
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
+        with:
+          prerelease: true  # This is the "magic switch"
 
       # --- NEW BUNDLING STEP ---
       - name: Archive Host Folders
