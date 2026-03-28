@@ -105,8 +105,9 @@ jobs:
           # Copy Web Files & Configs
           cp -rp ./Beacon/beacon-frontend/dist/. ./host-release/frontend/
           cp ./Beacon/release-docker-compose.yml ./host-release/docker-compose.yml
-          cp -r ./Beacon/nginx/ ./host-release/nginx/
-          cp ./Beacon/prod.env  ./host-release/.env
+          cp -r ./Beacon/nginx/prod.conf ./host-release/nginx/default.conf
+          cp ./Beacon/prod.env ./host-release/.env
+          cp ./Beacon/database/ ./host-release/
 
 
       - name: Upload Host Artifact
