@@ -107,8 +107,9 @@ jobs:
           cp -rp ./Beacon/beacon-frontend/dist/. ./host-release/frontend/
           cp ./Beacon/release-docker-compose.yml ./host-release/docker-compose.yml
           cp -r ./Beacon/nginx/prod.conf ./host-release/nginx/default.conf
-          cp ./Beacon/prod.env ./host-release/.env
-          cp ./Beacon/database/./host-release/
+          sudo cp ./Beacon/prod.env ./host-release/.env
+      - name: Checkout Code
+          cp ./Beacon/database/ ./host-release/
 
 
       - name: Upload Host Artifact
