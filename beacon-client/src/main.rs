@@ -6,14 +6,26 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let target_host_ip = "12.34.56.78";
-    let target_port = "8080";
-    let local_alias = "beacon.local";
-    let container_name = "beacon-proxy-helper";
-
     println!("========================================");
     println!("   BEACON HUB: GAME SERVER HELPER       ");
     println!("========================================");
+
+    // --- NEW INPUT LOGIC ---
+    print!("🌐 Enter the Desired Target IP (e.g., 12.34.56.78): ");
+    io::stdout().flush()?;
+    let mut target_host_ip = String::new();
+    io::stdin().read_line(&mut target_host_ip)?;
+    let target_host_ip = target_host_ip.trim();
+
+    if target_host_ip.is_empty() {
+        println!("❌ Error: IP address cannot be empty.");
+        pause_and_exit();
+    }
+    // -----------------------
+
+    let target_port = "25565";
+    let local_alias = "beacon.local";
+    let container_name = "beacon-proxy-helper";
 
     // 1. PRIVILEGE CHECK
     if !check_permissions() {
@@ -49,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "run", "-d",
             "--name", container_name,
             "-p", "80:80",
-            "-v", &format!("{}:/etc/nginx/nginx.conf:ro", conf_path.to_str().unwrap()),
+            "-v", &format!("{}:/etc/nginx/nginx.conf:ro", conf_path.to_str().expect("Failed to get config path")),
             "nginx:alpine"
         ])
         .status()?;
@@ -69,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. HANG & CLEANUP
     ctrlc::set_handler(move || {
         println!("\n🛑 Stopping services...");
+        // Note: Using hardcoded strings here because variables were moved into the closure
         cleanup("beacon-proxy-helper", "beacon.local");
         println!("✅ Cleanup complete. System restored.");
         std::process::exit(0);
@@ -78,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop { tokio::time::sleep(std::time::Duration::from_secs(3600)).await; }
 }
 
+// ... Rest of your functions (install_docker_distro, cleanup, etc.) remain the same ...
 // --- INSTALLATION LOGIC ---
 
 async fn install_docker_distro() -> Result<(), Box<dyn std::error::Error>> {
