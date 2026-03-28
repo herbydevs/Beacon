@@ -1,15 +1,14 @@
 name: Beacon Alpha 
+
 on:
   push:
     tags: ['alpha*']
 
 permissions:
   contents: write
-# ------------------------
 
 jobs:
-  # NEW STAGE: Build the Linux Backend API (For Docker)
-  # We do this once on Ubuntu to ensure compatibility with Docker containers.
+  # STAGE 0: Build Linux Backend
   build-backend-linux:
     runs-on: ubuntu-latest
     steps:
@@ -22,7 +21,6 @@ jobs:
           targets: x86_64-unknown-linux-gnu
 
       - name: Install Cross-Linker
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-x86-64-linux-gnu
@@ -37,7 +35,7 @@ jobs:
           name: backend-linux-bin
           path: backend/target/x86_64-unknown-linux-gnu/release/backend
 
-  # STAGE 1: Build & Assemble the Host Release (Multi-Platform)
+  # STAGE 1: Build Host Release
   build-host-alpha:
     needs: build-backend-linux
     strategy:
@@ -56,18 +54,17 @@ jobs:
         with:
           path: Beacon
 
-      # 1. Build Vue Frontend (Platform Independent)
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
       - name: Build Frontend
         working-directory: ./Beacon/beacon-frontend
         run: |
           npm install
           npm run build
 
-      # 2. Build Host Orchestrator (Native)
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -77,38 +74,35 @@ jobs:
         working-directory: ./Beacon/beacon-host
         run: cargo build --release --target ${{ matrix.target }}
 
-      # 3. Fetch the Linux Backend binary built in the previous job
       - name: Download Linux Backend
         uses: actions/download-artifact@v4
         with:
           name: backend-linux-bin
           path: ./Beacon/backend/target/linux-release/
 
-      # 4. Assemble Release Folder (Platform Aware)
       - name: Package Host Alpha
         shell: bash
         run: |
           mkdir -p ./host-release/bin
           mkdir -p ./host-release/frontend
+          mkdir -p ./host-release/nginx
+          mkdir -p ./host-release/database
           
-          # Detect native executable extension for Host Orchestrator
           EXT=""
           if [ "${{ matrix.os }}" = "windows-latest" ]; then EXT=".exe"; fi
           
           # Copy Binaries
-          # NOTE: Backend is ALWAYS the linux version for the Docker container
           cp ./Beacon/backend/target/linux-release/backend ./host-release/bin/backend
-          # Host Orchestrator remains native to the Runner OS
           cp ./Beacon/beacon-host/target/${{ matrix.target }}/release/beacon-host$EXT ./host-release/
           
-          # Copy Web Files & Configs
+          # Copy Assets
           cp -rp ./Beacon/beacon-frontend/dist/. ./host-release/frontend/
           cp ./Beacon/release-docker-compose.yml ./host-release/docker-compose.yml
-          cp -r ./Beacon/nginx/prod.conf ./host-release/nginx/default.conf
-          sudo cp ./Beacon/prod.env ./host-release/.env
-      - name: Checkout Code
-          cp ./Beacon/database/ ./host-release/
-
+          cp ./Beacon/nginx/prod.conf ./host-release/nginx/default.conf
+          
+          # Handle optional files safely
+          if [ -f "./Beacon/prod.env" ]; then cp ./Beacon/prod.env ./host-release/.env; fi
+          if [ -d "./Beacon/database" ]; then cp -r ./Beacon/database/. ./host-release/database/; fi
 
       - name: Upload Host Artifact
         uses: actions/upload-artifact@v4
@@ -116,7 +110,7 @@ jobs:
           name: beacon-host-release${{ matrix.suffix }}
           path: ./host-release/
 
-  # STAGE 2: Build the Client Release (Multi-Platform)
+  # STAGE 2: Build Client
   build-client-alpha:
     strategy:
       matrix:
@@ -140,27 +134,14 @@ jobs:
       - name: Build and Package Client
         shell: bash
         run: |
-          # 1. Navigate to the project folder
-          cd beacon-client || { echo "Directory 'beacon-client' not found"; exit 1; }
-          
-          # 2. Build Native Client
+          cd beacon-client
           cargo build --release --target ${{ matrix.target }}
-          
-          # 3. Prep the release folder
           cd ..
           mkdir -p ./client-release
           
-          # 4. Copy the binary
           EXT=""
           if [ "${{ matrix.os }}" = "windows-latest" ]; then EXT=".exe"; fi
-          SOURCE="./beacon-client/target/${{ matrix.target }}/release/beacon-client$EXT"
-          
-          if [ -f "$SOURCE" ]; then
-            cp "$SOURCE" ./client-release/beacon-client${{ matrix.suffix }}$EXT
-          else
-            echo "Error: Binary not found at $SOURCE"
-            exit 1
-          fi
+          cp "./beacon-client/target/${{ matrix.target }}/release/beacon-client$EXT" ./client-release/beacon-client${{ matrix.suffix }}$EXT
 
       - name: Upload Client Artifact
         uses: actions/upload-artifact@v4
@@ -168,29 +149,23 @@ jobs:
           name: beacon-client-release${{ matrix.suffix }}
           path: ./client-release/
 
-  # STAGE 3: Final GitHub Release
+  # STAGE 3: Final Release
   create-alpha:
-    needs: [build-host-release, build-client-release]
+    needs: [build-host-alpha, build-client-alpha]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
-        with:
-          prerelease: true  # This is the "magic switch"
 
-      # --- NEW BUNDLING STEP ---
       - name: Archive Host Folders
         run: |
-          # Zip the Windows Host folder
           zip -r beacon-host-windows.zip beacon-host-release-windows/
-          
-          # Tar the macOS Host folder (better for Unix permissions)
           tar -czvf beacon-host-macos.tar.gz beacon-host-release-macos/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2 # Updated to v2
+        uses: softprops/action-gh-release@v2
         with:
+          prerelease: true
           files: |
             beacon-host-windows.zip
             beacon-host-macos.tar.gz
