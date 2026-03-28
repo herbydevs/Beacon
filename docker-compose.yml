@@ -68,6 +68,8 @@ services:
     image: node:20-alpine
     container_name: beacon_frontend_dev
     working_dir: /app/beacon-frontend
+    environment:          # This "bakes" the URL into the JS files during the build
+          VITE_API_URL: http://api.beacon.local/api/v1
     volumes:
       - ./beacon-frontend:/app/beacon-frontend
       - /app/beacon-frontend/node_modules
@@ -84,7 +86,7 @@ services:
     ports:
       - "80:80"
     volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
     depends_on:
       - backend
       - frontend

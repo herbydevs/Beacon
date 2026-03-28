@@ -21,6 +21,8 @@ services:
     image: node:20-alpine
     container_name: beacon-frontend-node
     restart: unless-stopped
+    environment:          # This "bakes" the URL into the JS files during the build
+          VITE_API_URL: http://api.beacon.local/api/v1
     working_dir: /app
     volumes:
       - ./frontend:/app/frontend:ro

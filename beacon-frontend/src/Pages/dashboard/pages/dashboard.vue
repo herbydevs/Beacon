@@ -79,7 +79,7 @@ const selectedPlayer = ref(null)
  */
 const fetchServers = () => {
   isLoading.value = true;
-  clusterStream = new EventSource("/api/v1/servers/get");
+  clusterStream = new EventSource("http://api.beacon.local/api/v1/servers/get");
 
   clusterStream.onmessage = (event) => {
     try {
@@ -223,6 +223,7 @@ const closeMenus = () => {
 onMounted(() => {
   fetchServers();
   window.addEventListener('click', closeMenus);
+  console.log(import.meta.env.VITE_API_URL)
 });
 
 onUnmounted(() => {
