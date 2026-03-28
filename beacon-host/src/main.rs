@@ -1,13 +1,11 @@
 use std::fs::{self, File};
 use std::io::{self, Write, BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Command, Stdio, Child};
 use std::path::{PathBuf};
 use std::env;
 use std::net::{UdpSocket, SocketAddr};
 use tokio::time::{sleep, Duration};
 
-// Baked into the binary at compile-time.
-// Adjusted path to look two levels up from src/ to find the root docker-compose.yml
 const DOCKER_COMPOSE_RAW: &str = include_str!("../../docker-compose.yml");
 
 #[tokio::main]
@@ -25,60 +23,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      BEACON HUB: P2P ORCHESTRATOR      ");
     println!("========================================");
 
-    // 1. PRIVILEGE & DOCKER CHECKS (Existing)
+    // 1. PRIVILEGE & INSTALLATION CHECKS
+    // On Windows, we still check for Admin. On Mac, we run as User.
+    #[cfg(windows)]
     if !is_admin() {
         show_permission_error();
         pause_and_exit();
     }
 
     if !is_docker_installed() {
-        // ... (Keep your existing install_docker() logic here)
+        println!("🐳 Docker not found. Installing...");
+        install_docker().await?;
     }
 
-    // 2. NAT HOLE PUNCHING SEQUENCE (New Feature)
+    if !is_cloudflared_installed() {
+        println!("☁️  Cloudflared not found. Installing...");
+        install_cloudflared().await?;
+    }
+
+    // 2. NAT HOLE PUNCHING (Fallback)
     println!("📡 Initializing P2P Connectivity...");
-    
-    // Bind to the port your Docker stack expects (usually 25565 or 80/443)
     let socket = match UdpSocket::bind("0.0.0.0:25565") {
         Ok(s) => s,
-        Err(_) => {
-            println!("⚠️ Warning: Local port 25565 is busy. P2P Punching might be limited.");
-            UdpSocket::bind("0.0.0.0:0")?
-        }
+        Err(_) => UdpSocket::bind("0.0.0.0:0")?
     };
     socket.set_nonblocking(true)?;
 
-    // Identify Public IP/Port via STUN
-    let stun_addr = "74.125.200.127:19302"; // stun.l.google.com
-    let _ = socket.send_to(&[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], stun_addr);
-    sleep(Duration::from_secs(1)).await;
+    // 3. CLOUDFLARE TUNNEL
+    println!("☁️  Spinning up Cloudflare Quick Tunnel...");
+    let mut tunnel_process = start_cloudflare_tunnel(25565)?;
+    sleep(Duration::from_secs(3)).await;
 
-    println!("\n----------------------------------------");
-    println!("📢 SHARE YOUR PUBLIC IP WITH THE PEER");
-    println!("Your Port: 25565 (UDP)");
-    println!("----------------------------------------\n");
-
-    print!("🌐 Enter Peer's Public IP: ");
-    io::stdout().flush()?;
-    let mut peer_ip = String::new();
-    io::stdin().read_line(&mut peer_ip)?;
-    let peer_ip = peer_ip.trim();
-
-    if !peer_ip.is_empty() {
-        let peer_addr: SocketAddr = format!("{}:25565", peer_ip).parse()?;
-        println!("🥊 Punching hole to {}...", peer_addr);
-        for _ in 0..10 {
-            let _ = socket.send_to(b"BEACON_PUNCH", peer_addr);
-            sleep(Duration::from_millis(200)).await;
-        }
-    }
-
-    // 3. ORCHESTRATION SETUP (Existing)
+    // 4. ORCHESTRATION SETUP
     ensure_compose_exists(&compose_path)?;
-    println!("🌐 Mapping subdomains in hosts file...");
+    println!("🌐 Mapping subdomains (Password may be required for hosts file)...");
     update_hosts(&aliases, true)?;
 
-    // 4. RUN STACK (Existing)
+    // 5. RUN STACK
     println!("🐳 Launching Beacon Stack...");
     Command::new("docker")
         .args(&["compose", "-f", compose_path.to_str().unwrap(), "up", "-d"])
@@ -86,30 +67,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🚀 BEACON LIVE | http://beacon.local");
     println!("--------------------------------------------------");
-    println!("COMMANDS: [start] [stop] [status] [restart] [exit]");
+    println!("COMMANDS: [start] [stop] [connect <url>] [exit]");
     println!("--------------------------------------------------");
 
-    // 5. HUB LOOP & CLEANUP (Existing)
+    // 6. HUB LOOP & CLEANUP
     let aliases_cleanup = aliases.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let compose_path_cleanup = compose_path.clone();
-    
+
     ctrlc::set_handler(move || {
         println!("\n🛑 Emergency shutdown initiated...");
+        let _ = tunnel_process.kill();
         let refs: Vec<&str> = aliases_cleanup.iter().map(|s| s.as_str()).collect();
         full_cleanup(&refs, &compose_path_cleanup);
         std::process::exit(0);
     })?;
 
-    // ... (Keep your existing loop match logic here)
-    
+    let stdin = io::stdin();
+    for line in stdin.lock().lines() {
+        let input = line?.trim().to_lowercase();
+        let parts: Vec<&str> = input.split_whitespace().collect();
+
+        match parts.get(0) {
+            Some(&"exit") => break,
+            Some(&"stop") => {
+                let _ = Command::new("docker").args(&["compose", "stop"]).status();
+            },
+            Some(&"start") => {
+                let _ = Command::new("docker").args(&["compose", "start"]).status();
+            },
+            Some(&"connect") => {
+                if let Some(url) = parts.get(1) {
+                    println!("🔗 Joining tunnel: {}", url);
+                    connect_to_tunnel(url)?;
+                }
+            },
+            _ => println!("Unknown command."),
+        }
+    }
+
     Ok(())
 }
 
-// --- CORE LOGIC FUNCTIONS ---
+// --- CLOUDFLARE LOGIC ---
+
+fn is_cloudflared_installed() -> bool {
+    Command::new("cloudflared").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
+}
+
+async fn install_cloudflared() -> io::Result<()> {
+    #[cfg(target_os = "windows")] {
+        Command::new("winget").args(&["install", "--id", "Cloudflare.cloudflared", "--silent"]).status()?;
+    }
+    #[cfg(target_os = "macos")] {
+        // Run brew as the current user
+        Command::new("brew").args(&["install", "cloudflare/cloudflare/cloudflared"]).status()?;
+    }
+    Ok(())
+}
+
+fn start_cloudflare_tunnel(port: u16) -> io::Result<Child> {
+    Command::new("cloudflared")
+        .args(&["tunnel", "--url", &format!("tcp://localhost:{}", port), "--no-autoupdate"])
+        .stdout(Stdio::inherit())
+        .spawn()
+}
+
+fn connect_to_tunnel(hostname: &str) -> io::Result<()> {
+    Command::new("cloudflared")
+        .args(&["access", "tcp", "--hostname", hostname, "--url", "localhost:25565"])
+        .spawn()?;
+    Ok(())
+}
+
+// --- CORE LOGIC ---
 
 fn ensure_compose_exists(path: &PathBuf) -> io::Result<()> {
     if !path.exists() {
-        println!("🛠️  Syncing orchestration files...");
         fs::write(path, DOCKER_COMPOSE_RAW)?;
     }
     Ok(())
@@ -117,69 +150,67 @@ fn ensure_compose_exists(path: &PathBuf) -> io::Result<()> {
 
 fn full_cleanup(aliases: &[&str], compose_path: &PathBuf) {
     let _ = update_hosts(aliases, false);
-    let _ = Command::new("docker")
-        .args(&["compose", "-f", compose_path.to_str().unwrap(), "down"])
-        .status();
-    if compose_path.exists() {
-        let _ = fs::remove_file(compose_path);
-    }
+    let _ = Command::new("docker").args(&["compose", "-f", compose_path.to_str().unwrap(), "down"]).status();
+    if compose_path.exists() { let _ = fs::remove_file(compose_path); }
 }
-
-// --- SYSTEM UTILITIES ---
 
 fn is_admin() -> bool {
     #[cfg(windows)] {
         Command::new("net").arg("session").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
     }
-    #[cfg(unix)] {
-        unsafe { libc::getuid() == 0 }
-    }
+    #[cfg(unix)] { true } // We handle sudo internally on Mac
 }
 
 fn is_docker_installed() -> bool {
     Command::new("docker").arg("--version").stdout(Stdio::null()).status().map_or(false, |s| s.success())
 }
 
-#[allow(dead_code)]
-fn is_daemon_running() -> bool {
-    Command::new("docker").arg("info").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
-}
-
 async fn install_docker() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")] {
-        let _ = Command::new("wsl").args(&["--install", "--no-distribution"]).status();
-        let _ = Command::new("winget").args(&["install", "Docker.DockerDesktop"]).status();
+        Command::new("winget").args(&["install", "Docker.DockerDesktop"]).status()?;
     }
     #[cfg(target_os = "macos")] {
-        println!("🚀 Using Homebrew to install Docker...");
-        let _ = Command::new("brew").args(&["install", "--cask", "docker"]).status();
+        Command::new("brew").args(&["install", "--cask", "docker"]).status()?;
     }
     Ok(())
 }
 
-
 fn update_hosts(aliases: &[&str], add: bool) -> io::Result<()> {
     let path = if cfg!(windows) { r"C:\Windows\System32\drivers\etc\hosts" } else { "/etc/hosts" };
-    let file = File::open(path)?;
-    let mut lines: Vec<String> = BufReader::new(file).lines().map(|l| l.unwrap()).collect();
 
-    // Clean old entries
+    let content = fs::read_to_string(path)?;
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
     lines.retain(|line| !aliases.iter().any(|&a| line.contains(a)));
 
     if add {
-        for alias in aliases {
-            lines.push(format!("127.0.0.1 {}", alias));
+        for alias in aliases { lines.push(format!("127.0.0.1 {}", alias)); }
+    }
+    let new_content = lines.join("\n");
+
+    #[cfg(unix)] {
+        // Use sh -c to allow the sudo context to handle the redirection/write properly
+        let status = Command::new("sudo")
+            .arg("sh")
+            .arg("-c")
+            .arg(format!("echo '{}' > {}", new_content.replace("'", "'\\''"), path))
+            .status()?;
+
+        if !status.success() {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Failed to write to /etc/hosts via sudo"));
         }
+
+        // Flush the DNS cache so macOS picks up the change immediately
+        let _ = Command::new("sudo").args(&["killall", "-HUP", "mDNSResponder"]).status();
     }
 
-    let mut file = File::create(path)?;
-    for line in lines { writeln!(file, "{}", line)?; }
+    #[cfg(windows)] {
+        fs::write(path, new_content)?;
+    }
     Ok(())
 }
 
 fn show_permission_error() {
-    #[cfg(windows)] { println!("❌ Error: This app must be 'Run as Administrator'."); }
-    #[cfg(unix)] { println!("❌ Error: This app must be run with 'sudo'."); }
+    #[cfg(windows)] { println!("❌ Error: Please 'Run as Administrator'."); }
 }
 
 fn pause_and_exit() {
