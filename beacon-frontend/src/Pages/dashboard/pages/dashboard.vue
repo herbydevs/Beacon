@@ -111,7 +111,7 @@ const getServerLog = (name) => {
   logs.value = [];
   if (logStream) logStream.close();
 
-  logStream = new EventSource(`/api/v1/servers/${name}/logs`);
+  logStream = new EventSource(`http://api.beacon.local/api/v1/servers/${name}/logs`);
 
   logStream.onmessage = (event) => {
     logs.value.push(event.data);
@@ -150,7 +150,7 @@ const closeStats = () => {
 const toggleStatus = async (name, status) => {
   const action = status === "RUNNING" ? "stop" : "start";
   try {
-    await fetch(`/api/v1/servers/${action}`, {
+    await fetch(`http://api.beacon.local/api/v1/servers/${action}`, {
       method: "POST",
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name })
@@ -176,7 +176,7 @@ const deployInstance = async () => {
   };
 
   try {
-    const response = await fetch('/api/v1/servers/create', {
+    const response = await fetch('http://api.beacon.local/api/v1/servers/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -197,7 +197,7 @@ const deleteInstance = async (id) => {
   if (!confirm("Are you sure you want to permanently delete this instance? This cannot be undone.")) return;
 
   try {
-    const response = await fetch('/api/v1/servers/delete', {
+    const response = await fetch('http://api.beacon.local/api/v1/servers/delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: id })
