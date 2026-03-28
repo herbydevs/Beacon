@@ -4,6 +4,14 @@ on:
   push:
     tags: ['v*']
 
+permissions:
+  contents: write
+# ------------------------
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
 jobs:
   # NEW STAGE: Build the Linux Backend API (For Docker)
   # We do this once on Ubuntu to ensure compatibility with Docker containers.
