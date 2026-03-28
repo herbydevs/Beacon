@@ -167,19 +167,29 @@ jobs:
           path: ./client-release/
 
   # STAGE 3: Final GitHub Release
-  create-release:
+create-release:
     needs: [build-host-release, build-client-release]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
+
+      # --- NEW BUNDLING STEP ---
+      - name: Archive Host Folders
+        run: |
+          # Zip the Windows Host folder
+          zip -r beacon-host-windows.zip beacon-host-release-windows/
+          
+          # Tar the macOS Host folder (better for Unix permissions)
+          tar -czvf beacon-host-macos.tar.gz beacon-host-release-macos/
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2 # Updated to v2
         with:
           files: |
-            beacon-host-release-windows/**
-            beacon-host-release-macos/**
-            beacon-client-release-windows/*
-            beacon-client-release-macos/*
+            beacon-host-windows.zip
+            beacon-host-macos.tar.gz
+            beacon-client-release-windows/beacon-client-windows.exe
+            beacon-client-release-macos/beacon-client-macos
           generate_release_notes: true
