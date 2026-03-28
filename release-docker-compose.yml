@@ -23,7 +23,7 @@ services:
   backend:
     # 1. Use a standard image instead of 'build'
     image: ubuntu:22.04
-    container_name: beacon_backend_dev
+    container_name: beacon_backend_prod
     restart: unless-stopped
     # 2. Map your local binary to the container
     volumes:

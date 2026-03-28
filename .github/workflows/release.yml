@@ -100,17 +100,14 @@ jobs:
           # NOTE: Backend is ALWAYS the linux version for the Docker container
           cp ./Beacon/backend/target/linux-release/backend ./host-release/bin/backend
           # Host Orchestrator remains native to the Runner OS
-          cp ./Beacon/beacon-host/target/${{ matrix.target }}/release/beacon-host$EXT ./host-release/bin/
+          cp ./Beacon/beacon-host/target/${{ matrix.target }}/release/beacon-host$EXT ./host-release/
           
           # Copy Web Files & Configs
           cp -rp ./Beacon/beacon-frontend/dist/. ./host-release/frontend/
           cp ./Beacon/release-docker-compose.yml ./host-release/docker-compose.yml
-          if [ -f "./Beacon/.env" ]; then
-            cp -f ./Beacon/.env ./host-release/.env
-          else
-            touch ./host-release/.env
-          fi
           cp -r ./Beacon/nginx/ ./host-release/nginx/
+          cp ./Beacon/prod.env  ./host-release/.env
+
 
       - name: Upload Host Artifact
         uses: actions/upload-artifact@v4
