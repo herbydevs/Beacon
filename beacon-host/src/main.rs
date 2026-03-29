@@ -90,6 +90,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🐳 Launching Beacon Stack...");
     let mut docker_cmd = Command::new("docker");
 
+    #[cfg(windows)]
+    {
+        // Force Docker to use the Windows Named Pipe instead of a Unix Socket
+        docker_cmd.env("DOCKER_HOST", "npipe:////./pipe/docker_engine");
+    }
+    
     // Ensure the process starts in the project root
     docker_cmd.current_dir(&root_dir);
 
@@ -151,6 +157,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             Some(&"create") => {
                 println!("🐳 Re-initializing full Beacon stack...");
+                #[cfg(windows)]
+                {
+                    // Force Docker to use the Windows Named Pipe instead of a Unix Socket
+                    docker_cmd.env("DOCKER_HOST", "npipe:////./pipe/docker_engine");
+                }
                 let mut cmd = Command::new("docker");
                 cmd.current_dir(&root_dir);
                 cmd.args(&["compose", "up", "-d"]);
