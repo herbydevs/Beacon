@@ -1,5 +1,5 @@
 @echo off
-set "TARGET_DIR=..\.."
+set "TARGET_DIR=..\"
 set "ENV_FILE=%TARGET_DIR%\.env"
 
 echo Creating .env file at %ENV_FILE%...

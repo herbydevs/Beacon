@@ -1,14 +1,12 @@
 use std::fs::{self, File};
 use std::io::{self, Write, BufRead, BufReader};
 use std::process::{Command, Stdio, Child};
-use std::path::{PathBuf};
+use std::path::{PathBuf, Path};
 use std::env;
-use std::net::{UdpSocket, SocketAddr};
+use std::net::UdpSocket;
 use tokio::time::{sleep, Duration};
 use std::collections::HashMap;
-
-
-const DOCKER_COMPOSE_RAW: &str = include_str!("../../docker-compose.yml");
+use log::error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,14 +17,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "sso.beacon.local"
     ];
 
-    let compose_path = env::current_dir()?.join("docker-compose.yml");
+    // --- SMART PATH RESOLUTION ---
+    let exe_path = std::env::current_exe()?;
+    let mut root_dir = exe_path.parent()
+        .ok_or("Could not find parent directory")?
+        .to_path_buf();
+
+    if root_dir.ends_with("backend") {
+        root_dir.pop();
+    }
+
+    let compose_path = root_dir.join("docker-compose.yml");
+    let env_path = root_dir.join(".env");
+
 
     println!("========================================");
     println!("      BEACON HUB: P2P ORCHESTRATOR      ");
     println!("========================================");
+    println!("🚀 Executing from: {:?}", exe_path);
+    println!("📂 Project Root: {:?}", root_dir);
 
     // 1. PRIVILEGE & INSTALLATION CHECKS
-    // On Windows, we still check for Admin. On Mac, we run as User.
     #[cfg(windows)]
     if !is_admin() {
         show_permission_error();
@@ -43,48 +54,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         install_cloudflared().await?;
     }
 
-    // 2. NAT HOLE PUNCHING (Fallback)
+
+
+    // 2. LOAD ENVIRONMENT
+    // We store these in a HashMap and pass them directly to the process environment
+    let env_vars = if env_path.exists() {
+        println!("📝 Loading configuration from: {:?}", env_path);
+        load_env_map(&env_path)
+    } else {
+        println!("⚠️  No .env found at {:?}, using defaults.", env_path);
+        HashMap::new()
+    };
+
+    let vars = env_vars;
+    print!("{:?}", &vars);
+
+    // 3. NAT HOLE PUNCHING
     println!("📡 Initializing P2P Connectivity...");
-    let socket = match UdpSocket::bind("0.0.0.0:25565") {
+    let _socket = match UdpSocket::bind("0.0.0.0:25565") {
         Ok(s) => s,
         Err(_) => UdpSocket::bind("0.0.0.0:0")?
     };
-    socket.set_nonblocking(true)?;
 
-    // 3. CLOUDFLARE TUNNEL
+    // 4. CLOUDFLARE TUNNEL
     println!("☁️  Spinning up Cloudflare Quick Tunnel...");
     let mut tunnel_process = start_cloudflare_tunnel(25565)?;
     sleep(Duration::from_secs(3)).await;
 
-    // 4. ORCHESTRATION SETUP
+    // 5. ORCHESTRATION SETUP
     ensure_compose_exists(&compose_path)?;
     println!("🌐 Mapping subdomains (Password may be required for hosts file)...");
     update_hosts(&aliases, true)?;
-    // 1. Find the folder where the 'beacon-host' binary is actually sitting
-    let mut base_dir = std::env::current_exe()?;
-    base_dir.pop(); // Remove the filename to get the directory
 
-    // 2. Build the absolute paths
-    let compose_path = base_dir.join("docker-compose.yml");
-    let env_path = base_dir.join(".env");
+    // 6. LAUNCH DOCKER STACK
+    println!("🐳 Launching Beacon Stack...");
+    let mut docker_cmd = Command::new("docker");
 
-    // 3. Build the Docker command dynamically
-    let mut docker_args = vec![
-        "compose",
-        "-f", compose_path.to_str().expect("Invalid compose path")
-    ];
-    // 4. Only add the --env-file flag if the file exists (Fixes your "no such file" error)
-    if env_path.exists() {
-        docker_args.push("--env-file");
-        docker_args.push(env_path.to_str().expect("Invalid env path"));
-    }
-    // 5. Add the standard 'up' flags
-    docker_args.extend(&["up", "-d", "--remove-orphans"]);
-    println!("🐳 Launching Beacon Stack from: {:?}", base_dir);
+    // Ensure the process starts in the project root
+    docker_cmd.current_dir(&root_dir);
 
-    // 6. RUN STACK
-    Command::new("docker")
-        .args(&docker_args)
+    // Narrowed down arguments
+    docker_cmd.args(&["compose", "up", "-d"]);
+
+    // Inject the HashMap directly into the process environment
+    docker_cmd.envs(&vars)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()?;
+
+    // Pass the compose file explicitly
+    // docker_cmd.args(&["compose", "docker-compose.yml", "up", "-d", "--remove-orphans"]);
+
+    // FEATURE: Instead of --env-file, we pass the stored env_vars directly to the child process
+    docker_cmd.envs(&vars)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .status()?;
 
     println!("\n🚀 BEACON LIVE | http://beacon.local");
@@ -92,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("COMMANDS: [start] [stop] [connect <url>] [create] [exit]");
     println!("--------------------------------------------------");
 
-    // 6. HUB LOOP & CLEANUP
+    // 7. HUB LOOP & CLEANUP
     let aliases_cleanup = aliases.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let compose_path_cleanup = compose_path.clone();
 
@@ -105,46 +129,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let input = line?.trim().to_lowercase();
+    let mut lines = stdin.lock().lines();
+
+    while let Some(Ok(line)) = lines.next() {
+        let input = line.trim().to_lowercase();
         let parts: Vec<&str> = input.split_whitespace().collect();
 
         match parts.get(0) {
             Some(&"exit") => break,
             Some(&"stop") => {
-                let _ = Command::new("docker").args(&["compose", "stop"]).status();
+                let _ = Command::new("docker")
+                    .current_dir(&root_dir)
+                    .args(&["compose", "stop"])
+                    .status();
             },
             Some(&"start") => {
-                let _ = Command::new("docker").args(&["compose", "start"]).status();
+                let _ = Command::new("docker")
+                    .current_dir(&root_dir)
+                    .args(&["compose", "start"])
+                    .status();
             },
             Some(&"create") => {
-                // 1. Get the path of the ACTUAL running .exe
-                let mut exe_path = std::env::current_exe()?;
-                exe_path.pop(); // Remove the filename to get the folder path
-
-                // 2. Point to the files right next to the .exe
-                let compose_file = exe_path.join("docker-compose.yml");
-                let env_file = exe_path.join(".env");
-
-                println!("🐳 Launching full Beacon stack from: {}", exe_path.display());
-
-                // 3. Build the Docker command
+                println!("🐳 Re-initializing full Beacon stack...");
                 let mut cmd = Command::new("docker");
-                cmd.args(&[
-                    "compose",
-                    "-f", compose_file.to_str().unwrap()
-                ]);
+                cmd.current_dir(&root_dir);
+                cmd.args(&["compose", "up", "-d"]);
 
-                // 4. ONLY add the --env-file flag if the file actually exists
-                if env_file.exists() {
-                    cmd.args(&["--env-file", env_file.to_str().unwrap()]);
-                } else {
-                    println!("⚠️  Note: No .env found next to exe, using system defaults.");
-                }
-
-                // 5. Run the stack
-                match cmd.args(&["up", "-d"]).status() {
-                    Ok(_) => println!("🚀 Beacon stack is now LIVE!"),
+                // Pass stored vars here too
+                match cmd.envs(&vars).status() {
+                    Ok(_) => println!("✅ Beacon stack is updated/running!"),
                     Err(e) => println!("❌ Failed to launch: {}", e),
                 }
             },
@@ -156,12 +169,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             _ => println!("Unknown command."),
         }
+        print!("> ");
+        let _ = io::stdout().flush();
     }
 
     Ok(())
 }
 
-// --- CLOUDFLARE LOGIC ---
+// --- HELPERS ---
+
+fn load_env_map(path: &PathBuf) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    if let Ok(file) = File::open(path) {
+        let reader = BufReader::new(file);
+        for line in reader.lines().flatten() {
+            let line = line.trim();
+            // Ignore comments and empty lines
+            if line.is_empty() || line.starts_with('#') { continue; }
+            if let Some((key, value)) = line.split_once('=') {
+                map.insert(key.trim().to_string(), value.trim().to_string());
+            }
+        }
+    }
+    map
+}
 
 fn is_cloudflared_installed() -> bool {
     Command::new("cloudflared").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
@@ -172,7 +203,6 @@ async fn install_cloudflared() -> io::Result<()> {
         Command::new("winget").args(&["install", "--id", "Cloudflare.cloudflared", "--silent"]).status()?;
     }
     #[cfg(target_os = "macos")] {
-        // Run brew as the current user
         Command::new("brew").args(&["install", "cloudflare/cloudflare/cloudflared"]).status()?;
     }
     Ok(())
@@ -182,36 +212,39 @@ fn start_cloudflare_tunnel(port: u16) -> io::Result<Child> {
     Command::new("cloudflared")
         .args(&["tunnel", "--url", &format!("tcp://localhost:{}", port), "--no-autoupdate"])
         .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .spawn()
 }
 
 fn connect_to_tunnel(hostname: &str) -> io::Result<()> {
     Command::new("cloudflared")
         .args(&["access", "tcp", "--hostname", hostname, "--url", "localhost:25565"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
         .spawn()?;
     Ok(())
 }
 
-// --- CORE LOGIC ---
-
 fn ensure_compose_exists(path: &PathBuf) -> io::Result<()> {
     if !path.exists() {
-        fs::write(path, DOCKER_COMPOSE_RAW)?;
+        println!("docker compose does not exist");
     }
     Ok(())
 }
 
 fn full_cleanup(aliases: &[&str], compose_path: &PathBuf) {
     let _ = update_hosts(aliases, false);
-    let _ = Command::new("docker").args(&["compose", "-f", compose_path.to_str().unwrap(), "down"]).status();
-    if compose_path.exists() { let _ = fs::remove_file(compose_path); }
+    let _ = Command::new("docker")
+        .args(&["compose", "-f", compose_path.to_str().unwrap(), "down"])
+        .stdout(Stdio::inherit())
+        .status();
 }
 
 fn is_admin() -> bool {
     #[cfg(windows)] {
         Command::new("net").arg("session").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
     }
-    #[cfg(unix)] { true } // We handle sudo internally on Mac
+    #[cfg(unix)] { true }
 }
 
 fn is_docker_installed() -> bool {
@@ -230,35 +263,28 @@ async fn install_docker() -> Result<(), Box<dyn std::error::Error>> {
 
 fn update_hosts(aliases: &[&str], add: bool) -> io::Result<()> {
     let path = if cfg!(windows) { r"C:\Windows\System32\drivers\etc\hosts" } else { "/etc/hosts" };
-
     let content = fs::read_to_string(path)?;
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
     lines.retain(|line| !aliases.iter().any(|&a| line.contains(a)));
-
     if add {
         for alias in aliases { lines.push(format!("127.0.0.1 {}", alias)); }
     }
     let new_content = lines.join("\n");
-
     #[cfg(unix)] {
-        // Use sh -c to allow the sudo context to handle the redirection/write properly
         let status = Command::new("sudo")
             .arg("sh")
             .arg("-c")
             .arg(format!("echo '{}' > {}", new_content.replace("'", "'\\''"), path))
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdin(Stdio::inherit())
             .status()?;
-
         if !status.success() {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Failed to write to /etc/hosts via sudo"));
         }
-
-        // Flush the DNS cache so macOS picks up the change immediately
         let _ = Command::new("sudo").args(&["killall", "-HUP", "mDNSResponder"]).status();
     }
-
-    #[cfg(windows)] {
-        fs::write(path, new_content)?;
-    }
+    #[cfg(windows)] { fs::write(path, new_content)?; }
     Ok(())
 }
 

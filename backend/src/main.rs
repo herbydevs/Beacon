@@ -1,257 +1,129 @@
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::{self, Write, BufRead, BufReader};
-use std::process::{Command, Stdio, Child};
-use std::path::{PathBuf};
+use axum::{routing::get, Router};
+use bollard::Docker;
+use dotenvy::dotenv;
+use sqlx::postgres::PgPoolOptions;
 use std::env;
-use std::net::{UdpSocket, SocketAddr};
-use tokio::time::{sleep, Duration};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tower_http::cors::CorsLayer;
+use http::{header, Method};
+use std::io::{self, Write};
 
-const DOCKER_COMPOSE_RAW: &str = include_str!("../../docker-compose.yml");
+
+pub mod routes;
+pub mod keycloak;
+pub mod dbmodels;
+pub mod state;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let aliases = vec![
-        "beacon.local",
-        "app.beacon.local",
-        "api.beacon.local",
-        "sso.beacon.local"
-    ];
+async fn main() -> anyhow::Result<()> {
+    // 1. Initialize Environment & Startup Logs
+    dotenv().ok();
 
-    let current_dir = env::current_dir()?;
-    let compose_path = current_dir.join("docker-compose.yml");
-    let env_path = current_dir.join(".env");
+    println!("--- Project Beacon Startup ---");
+    println!("🚀 Version: v1.0");
+    io::stdout().flush().unwrap();
 
-    println!("========================================");
-    println!("      BEACON HUB: P2P ORCHESTRATOR      ");
-    println!("========================================");
-
-    // 0. LOAD ENVIRONMENT VARIABLES
-    // This fixes the "POSTGRES_USER not set" warnings
-    if env_path.exists() {
-        load_env_file(&env_path);
+    // Fetch Public IP
+    match reqwest::get("https://api.ipify.org").await {
+        Ok(resp) => {
+            if let Ok(ip) = resp.text().await {
+                println!("🌐 Public IP: {}", ip);
+            }
+        }
+        Err(_) => println!("🌐 Public IP: Unable to resolve (Offline?)"),
     }
 
-    // 1. PRIVILEGE & INSTALLATION CHECKS
-    #[cfg(windows)]
-    if !is_admin() {
-        show_permission_error();
-        pause_and_exit();
-    }
+    let cors = CorsLayer::new()
+        .allow_origin([
+            "http://beacon.local".parse()?,
+            "http://api.beacon.local".parse()?,
+            "http://localhost:5173".parse()?,
+        ])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE
+        ]);
 
-    if !is_docker_installed() {
-        println!("🐳 Docker not found. Installing...");
-        install_docker().await?;
-    }
+    // 2. Load Infrastructure Configurations
+    let database_url = env::var("DATABASE_URL")
+        .expect("DATABASE_URL must be set in .env");
+    let keycloak_realm = env::var("KEYCLOAK_REALM")
+        .unwrap_or_else(|_| "beacon".to_string());
 
-    if !is_cloudflared_installed() {
-        println!("☁️  Cloudflared not found. Installing...");
-        install_cloudflared().await?;
-    }
+    // 3. Initialize Database with Retry Logic
+    let mut pool = None;
+    let max_retries = 10;
 
-    // 2. NAT HOLE PUNCHING (Fallback)
-    println!("📡 Initializing P2P Connectivity...");
-    let socket = match UdpSocket::bind("0.0.0.0:25565") {
-        Ok(s) => s,
-        Err(_) => UdpSocket::bind("0.0.0.0:0")?
-    };
-    socket.set_nonblocking(true)?;
-
-    // 3. CLOUDFLARE TUNNEL
-    println!("☁️  Spinning up Cloudflare Quick Tunnel...");
-    let mut tunnel_process = start_cloudflare_tunnel(25565)?;
-    sleep(Duration::from_secs(3)).await;
-
-    // 4. ORCHESTRATION SETUP
-    ensure_compose_exists(&compose_path)?;
-    println!("🌐 Mapping subdomains (Password may be required for hosts file)...");
-    update_hosts(&aliases, true)?;
-
-    // 5. RUN STACK (Initial boot)
-    println!("🐳 Launching Beacon Stack...");
-    run_docker_up(&compose_path)?;
-
-    println!("\n🚀 BEACON LIVE | http://beacon.local");
-    println!("--------------------------------------------------");
-    println!("COMMANDS: [start] [stop] [connect <url>] [exit]");
-    println!("--------------------------------------------------");
-
-    // 6. HUB LOOP & CLEANUP
-    let aliases_cleanup = aliases.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let compose_path_cleanup = compose_path.clone();
-
-    ctrlc::set_handler(move || {
-        println!("\n🛑 Emergency shutdown initiated...");
-        let _ = tunnel_process.kill();
-        let refs: Vec<&str> = aliases_cleanup.iter().map(|s| s.as_str()).collect();
-        full_cleanup(&refs, &compose_path_cleanup);
-        std::process::exit(0);
-    })?;
-
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let input = line?.trim().to_lowercase();
-        let parts: Vec<&str> = input.split_whitespace().collect();
-
-        match parts.get(0) {
-            Some(&"exit") => break,
-            Some(&"stop") => {
-                println!("🛑 Stopping containers...");
-                let _ = Command::new("docker").args(&["compose", "stop"]).status();
-            },
-            Some(&"start") => {
-                println!("🚀 Restarting/Ensuring containers are up...");
-                // Use 'up -d' instead of 'start' to ensure containers are created if missing
-                let _ = run_docker_up(&compose_path);
-            },
-            Some(&"connect") => {
-                if let Some(url) = parts.get(1) {
-                    println!("🔗 Joining tunnel: {}", url);
-                    connect_to_tunnel(url)?;
+    for i in 1..=max_retries {
+        println!("🔄 Connecting to DB (Attempt {}/{})...", i, max_retries);
+        match PgPoolOptions::new()
+            .max_connections(20)
+            .acquire_timeout(Duration::from_secs(3))
+            .connect(&database_url)
+            .await
+        {
+            Ok(p) => {
+                pool = Some(p);
+                break;
+            }
+            Err(e) => {
+                if i == max_retries {
+                    eprintln!("❌ Database connection failed permanently: {}", e);
+                    io::stdout().flush().unwrap();
+                    anyhow::bail!("Could not connect to database");
                 }
-            },
-            _ => println!("Unknown command."),
-        }
-    }
-
-    Ok(())
-}
-
-// --- NEW HELPERS ---
-
-fn load_env_file(path: &PathBuf) -> HashMap<String, String> {
-    let mut env_map = HashMap::new();
-
-    if let Ok(file) = File::open(path) {
-        let reader = BufReader::new(file);
-        for line in reader.lines().flatten() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || !line.contains('=') {
-                continue;
-            }
-            let parts: Vec<&str> = line.splitn(2, '=').collect();
-            if parts.len() == 2 {
-                env_map.insert(
-                    parts[0].trim().to_string(),
-                    parts[1].trim().to_string()
-                );
+                println!("⚠️ Database not ready, retrying in 2s...");
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
     }
-    env_map
-}
-fn run_docker_up(compose_path: &PathBuf) -> io::Result<()> {
-    Command::new("docker")
-        .args(&["compose", "-f", compose_path.to_str().unwrap(), "up", "-d"])
-        .status()?;
+    let pool = pool.unwrap();
+
+    // 4. Initialize Docker Engine Client
+    let docker = Docker::connect_with_local_defaults()
+        .map_err(|e| {
+            eprintln!("❌ Docker socket unreachable. Check volume mounts.");
+            io::stdout().flush().unwrap();
+            e
+        })?;
+
+    println!("✅ Infrastructure (DB & Docker) Ready");
+
+    // 5. Shared Application State
+    let app_state = Arc::new(state::AppState {
+        pool,
+        docker,
+        keycloak_realm,
+        keycloak_config: keycloak::Keycloak::Config::load_from_env(),
+    });
+
+    // 6. Security & Routing
+    let app = Router::new()
+        .route("/", get(|| async { "Beacon Control Plane API v1.0" }))
+        .route("/health", get(|| async { "OK" }))
+        .nest("/api/v1", routes::api_router())
+        .layer(cors)
+        .with_state(app_state);
+
+    // 7. Start the Axum Server
+    let port = env::var("BACKEND_PORT").unwrap_or_else(|_| "8000".to_string());
+    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
+
+    println!("📡 Beacon Server listening on {}", addr);
+    println!("------------------------------");
+    io::stdout().flush().unwrap();
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+
     Ok(())
-}
-
-// --- CLOUDFLARE LOGIC ---
-
-fn is_cloudflared_installed() -> bool {
-    Command::new("cloudflared").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
-}
-
-async fn install_cloudflared() -> io::Result<()> {
-    #[cfg(target_os = "windows")] {
-        Command::new("winget").args(&["install", "--id", "Cloudflare.cloudflared", "--silent"]).status()?;
-    }
-    #[cfg(target_os = "macos")] {
-        Command::new("brew").args(&["install", "cloudflare/cloudflare/cloudflared"]).status()?;
-    }
-    Ok(())
-}
-
-fn start_cloudflare_tunnel(port: u16) -> io::Result<Child> {
-    Command::new("cloudflared")
-        .args(&["tunnel", "--url", &format!("tcp://localhost:{}", port), "--no-autoupdate"])
-        .stdout(Stdio::inherit())
-        .spawn()
-}
-
-fn connect_to_tunnel(hostname: &str) -> io::Result<()> {
-    Command::new("cloudflared")
-        .args(&["access", "tcp", "--hostname", hostname, "--url", "localhost:25565"])
-        .spawn()?;
-    Ok(())
-}
-
-// --- CORE LOGIC ---
-
-fn ensure_compose_exists(path: &PathBuf) -> io::Result<()> {
-    if !path.exists() {
-        fs::write(path, DOCKER_COMPOSE_RAW)?;
-    }
-    Ok(())
-}
-
-fn full_cleanup(aliases: &[&str], compose_path: &PathBuf) {
-    let _ = update_hosts(aliases, false);
-    let _ = Command::new("docker").args(&["compose", "-f", compose_path.to_str().unwrap(), "down"]).status();
-    // Only remove if it was generated by the app (optional safety)
-    // if compose_path.exists() { let _ = fs::remove_file(compose_path); }
-}
-
-fn is_admin() -> bool {
-    #[cfg(windows)] {
-        Command::new("net").arg("session").stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success())
-    }
-    #[cfg(unix)] { true }
-}
-
-fn is_docker_installed() -> bool {
-    Command::new("docker").arg("--version").stdout(Stdio::null()).status().map_or(false, |s| s.success())
-}
-
-async fn install_docker() -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(target_os = "windows")] {
-        Command::new("winget").args(&["install", "Docker.DockerDesktop"]).status()?;
-    }
-    #[cfg(target_os = "macos")] {
-        Command::new("brew").args(&["install", "--cask", "docker"]).status()?;
-    }
-    Ok(())
-}
-
-fn update_hosts(aliases: &[&str], add: bool) -> io::Result<()> {
-    let path = if cfg!(windows) { r"C:\Windows\System32\drivers\etc\hosts" } else { "/etc/hosts" };
-
-    let content = fs::read_to_string(path)?;
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    lines.retain(|line| !aliases.iter().any(|&a| line.contains(a)));
-
-    if add {
-        for alias in aliases { lines.push(format!("127.0.0.1 {}", alias)); }
-    }
-    let new_content = lines.join("\n");
-
-    #[cfg(unix)] {
-        let status = Command::new("sudo")
-            .arg("sh")
-            .arg("-c")
-            .arg(format!("echo '{}' > {}", new_content.replace("'", "'\\''"), path))
-            .status()?;
-
-        if !status.success() {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Failed to write to /etc/hosts via sudo"));
-        }
-
-        let _ = Command::new("sudo").args(&["killall", "-HUP", "mDNSResponder"]).status();
-    }
-
-    #[cfg(windows)] {
-        fs::write(path, new_content)?;
-    }
-    Ok(())
-}
-
-fn show_permission_error() {
-    #[cfg(windows)] { println!("❌ Error: Please 'Run as Administrator'."); }
-}
-
-fn pause_and_exit() {
-    println!("\nPress Enter to exit...");
-    let _ = io::stdin().read_line(&mut String::new());
-    std::process::exit(1);
 }

@@ -4,7 +4,7 @@ services:
   # 1. PostgreSQL Database (V4 Reset)
   postgres:
     image: postgres:16-alpine
-    container_name: beacon_db
+    container_name: beacon_db_prod
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-admin}
@@ -21,17 +21,19 @@ services:
 
   # 2. Backend (Rust V4)
   backend:
-    # 1. Use a standard image instead of 'build'
-    image: ubuntu:22.04
+    platform: linux/amd64
+    image: ubuntu:24.04
     container_name: beacon_backend_prod
     restart: unless-stopped
-    # 2. Map your local binary to the container
     volumes:
-      - ./bin/backend:/app/beacon:ro
+      # Keep it :ro for security; as long as the host file is +x, it works!
+      - ./bin/backend:/app/beacon
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app
-    # 3. Run the binary directly
-    command: ./beacon
+    # Run the binary directly
+    command: sh -c "chmod +x ./beacon && ./beacon"
+    # If you need a shell for any reason, use this format instead:
+    # command: sh -c "./beacon"
     env_file:
       - ./.env
     environment:
@@ -64,7 +66,8 @@ services:
   # 5. Nginx Proxy
   nginx:
     image: nginx:alpine
-    container_name: beacon_proxy
+    container_name: beacon_proxy_prod
+    restart: unless-stopped
     ports:
       - "80:80"
     volumes:

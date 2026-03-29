@@ -1,6 +1,6 @@
 #!/bin/bash
 
-TARGET_DIR="../../"
+TARGET_DIR="../"
 ENV_FILE="${TARGET_DIR}.env"
 
 echo "Creating .env file at $ENV_FILE..."
