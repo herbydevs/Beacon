@@ -1,89 +1,71 @@
-# 🗼 Beacon
-### A high-performance, container-native Minecraft orchestrator.
+# 🚀 Beacon Hub
+P2P Orchestrator and Control Plane
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Rust](https://img.shields.io/badge/backend-Rust-orange.svg)](https://www.rust-lang.org/)
-[![Vue 3](https://img.shields.io/badge/frontend-Vue%203-42b883.svg)](https://vuejs.org/)
-[![Docker](https://img.shields.io/badge/platform-Docker-blue.svg)](https://www.docker.com/)
+## 🛠 Features
+* **P2P Connectivity:** NAT hole-punching for seamless node connection.
+* **Docker Orchestration:** Automated management of the Beacon stack.
+* **Cloudflare Integration:** Secure tunneling out of the box.
 
-**Beacon** is a lightweight management suite designed to simplify the deployment and scaling of Minecraft servers. Built with a **Rust (Axum)** control plane and a **Vue 3** dashboard, Beacon provides a "blazingly fast" interface to spawn, monitor, and back up containerized game instances with near-zero host overhead.
+## 📁 Project Structure
+* `/backend`: Rust-based orchestrator core.
+* `/frontend`: Vue/Vite dashboard (contains `index.html` and assets).
+* `/database`: Initialization scripts and SQL schemas.
 
----
+## 🚀 Getting Started
+### Prerequisites
+* Docker Desktop (ensure the daemon is running)
+* Rust (latest stable)
+* Administrative/Sudo privileges (for `hosts` file mapping)
 
-## ✨ Features
+### Installation
+1. Clone the repository.
+2. Configure your `.env` file in the root directory.
+3. Run the setup script to initialize the database:
+   
+   # On macOS/Linux:
+   chmod +x ./setup_db.sh
+   ./setup_db.sh
+   
+   # On Windows (CMD/PowerShell as Admin):
+   setup_db.bat
 
-* ⚡ **One-Click Deployment:** Spin up Vanilla, Paper, or Forge servers in seconds.
-* 📈 **Real-time Monitoring:** Live CPU/RAM stats and console streaming via WebSockets.
-* 📦 **Container-First:** Every server runs in an isolated Docker environment for maximum security.
-* 💾 **Automated Backups:** Integrated snapshot system to keep your worlds safe.
-* 🛠️ **Developer-Friendly API:** A fully documented REST API for custom integrations.
-* 🔐 **Enterprise SSO:** Identity management powered by Keycloak.
+## 🎮 Usage
+Once the stack is live, the orchestrator provides a CLI for managing your nodes and tunnels.
 
----
-
-## 🏗️ Architecture
-
-Beacon uses a reverse-proxy model to manage internal services and provide a seamless Single Sign-On (SSO) experience.
-
-    [ User Browser ]
-           |
-    [ Nginx Proxy ] 
-           |
-    ---------------------------------------------------
-    |                 |                               |
-    [ Vue Dashboard ] [ Rust Control Plane ] [ Keycloak SSO ]
-    (app.beacon.local) (api.beacon.local)    (sso.beacon.local)
-                      |                               |
-                [ Docker Engine ]             [ Postgres DB ]
-                      |
-                -----------------------
-                |                     |
-          [ MC: Survival ]      [ MC: Creative ]
+- start          : Resumes the Docker stack if it was previously stopped.
+- stop           : Safely halts the running containers.
+- create         : Re-initializes the full stack (useful after config changes).
+- connect <url>  : Joins a remote P2P tunnel using the provided hostname.
+- exit           : Shuts down the orchestrator, stops tunnels, and cleans up.
 
 ---
 
-## 🚀 Quick Start (End-Users)
+## 📡 Networking & Subdomains
+Beacon automatically maps the following subdomains to your local loopback address. 
 
-### 1. Host Configuration
-Add the following to your system hosts file to enable local domain routing:
-* Linux/macOS: /etc/hosts
-* Windows: C:\Windows\System32\drivers\etc\hosts
-
-    127.0.0.1 app.beacon.local api.beacon.local sso.beacon.local
-
-### 2. Configure Environment
-Download the release, enter the directory, and initialize your configuration:
-
-    cp .env.example .env
-
-Edit .env and set secure values for POSTGRES_PASSWORD, KEYCLOAK_ADMIN_PASSWORD, and BEACON_SECRET_KEY.
-
-### 3. Deployment
-Run the stack using Docker Compose:
-
-    docker-compose up -d
-
-* Dashboard: http://app.beacon.local
-* API Docs: http://api.beacon.local/docs
-* SSO Admin: http://sso.beacon.local
+- beacon.local      -> Main Dashboard
+- api.beacon.local  -> Backend API
+- sso.beacon.local  -> Authentication Service
 
 ---
 
-## 🛠️ Development & Contributing
+## 🔧 Troubleshooting
+- Docker Connection: On Windows, ensure you "Run as Administrator" so the orchestrator can access the Docker Named Pipe (npipe://).
+- Architecture Errors: If using Apple Silicon (M1/M2/M3), ensure your docker-compose.yml specifies "platform: linux/amd64" for x86_64 binaries.
+- GLIBC Version: If you see "GLIBC_2.39 not found", ensure your Docker image is set to ubuntu:24.04 or higher.
 
-### Project Structure
-| Directory | Description |
-| :--- | :--- |
-| /backend | Rust Control Plane (Axum, Bollard, SQLx) |
-| /frontend | Vue 3 Dashboard (Vite, Tailwind, Pinia) |
-| /nginx | Reverse proxy configuration |
-| /keycloak | Realm exports & custom themes |
+---
 
-### Local Setup
-1. Backend: Ensure Postgres is running, then: cd backend && cargo watch -x run
-2. Frontend: cd frontend && npm install && npm run dev
+## 🛡 Security & Environment
+Configuration is handled via a .env file. Ensure these match your orchestrator settings:
 
-### Contribution Workflow
+POSTGRES_USER=user
+POSTGRES_PASSWORD=password
+POSTGRES_DB=beacon
+
+---
+
+## 🤝 Contributing
 1. Fork the Project.
 2. Create your Feature Branch (git checkout -b feature/AmazingFeature).
 3. Commit your Changes (git commit -m 'Add some AmazingFeature').
@@ -92,11 +74,5 @@ Run the stack using Docker Compose:
 
 ---
 
-## 🛡️ Security Note
-
-IMPORTANT: Beacon requires access to the Docker Socket (/var/run/docker.sock). In production environments, it is highly recommended to use a Docker Socket Proxy to limit the API calls Beacon can make to only necessary container management functions.
-
----
-
-## 📄 License
-Distributed under the MIT License. See LICENSE for more information.
+## ⚖️ License
+Distributed under the GPL-3.0 License. See LICENSE for more information.
